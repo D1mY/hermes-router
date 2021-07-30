@@ -1,5 +1,3 @@
 # Hermes Router
-
 ## about Project
-
-acts as plugins for RabbitMQ
+Each app in project acts as RabbitMQ plugin.
