@@ -13,7 +13,7 @@ unfold() ->
     {16#4,{2,fun(<<BinData:16/little>>) -> {<<"dev_id">>, BinData} end}},	%% "Device ID" (unsigned integer)
     {16#10,{2,fun(<<BinData:16/little>>) -> {<<"arch_pos">>, BinData} end}},	%% "Archive position" (unsigned integer)
     {16#20,{4,fun(<<BinData:32/little>>) -> {<<"utc_time">>,  BinData} end}},	%% "UTC time" - UTC time (same as erlang:system_time(seconds)) in seconds (unsigned integer)
-    {16#30,{9,fun(<<Valid:4,Sattelites:4,Latitude:4/little-unsigned-unit:8,Longitude:4/little-unsigned-unit:8>>) -> [{<<"valid">>, (Valid == 0) or (Valid == 2)},{<<"valid_gps">>, Valid == 0},{<<"valid_gsm">>, Valid == 2},{<<"sattelites">>, Sattelites},{<<"latitude">>, (Latitude/1000000)},{<<"longitude">>,(Longitude/1000000)}] end}},	%% "Device geoposition" (unsigned integer)
+    {16#30,{9,fun(<<Valid:4,Sattelites:4,Latitude:4/little-signed-integer-unit:8,Longitude:4/little-signed-integer-unit:8>>) -> [{<<"valid">>, (Valid == 0) or (Valid == 2)},{<<"valid_gps">>, Valid == 0},{<<"valid_gsm">>, Valid == 2},{<<"sattelites">>, Sattelites},{<<"latitude">>, (Latitude/1000000)},{<<"longitude">>,(Longitude/1000000)}] end}},	%% "Device geoposition" (signed/unsigned integer)
     {16#33,{4,fun(<<Speed:2/little-unsigned-unit:8,Course:2/little-unsigned-unit:8>>) -> [{<<"speed">>, (Speed/10)},{<<"course">>, (Course/10)}] end}},	%% "Speed and Direction" (unsigned integer)
     {16#34,{2,fun(<<BinData:16/little>>) -> {<<"altitude">>, BinData} end}},	%% "Altitude" signed (signed integer)
     {16#35,{1,fun(<<BinData>>) -> [{<<"hdop_gps">>, (BinData/10)},{<<"hdop_gsm">>, (BinData*10)}] end}},	%% "HDOP or GSMLocationError" (unsigned integer)
