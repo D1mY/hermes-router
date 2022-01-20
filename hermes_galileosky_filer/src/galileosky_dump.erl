@@ -1,6 +1,6 @@
-%%%% Galileosky protocol default decoder
-%%%% User's protocol over Galileosky protocol listener
--module (galileoskydec).
+%%%% Galileosky devices packets dumper
+%%%% Pull and push queues messages
+-module (galileosky_dump).
 
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
 
@@ -186,7 +186,7 @@ nack_msgs(Channel, DlvrTag) ->
 
 parse_path(Path, VNode, Q) ->
   case Path = filelib:ensure_dir(erlang:binary_to_list(Path) ++ "/") of
-    ok -> Path;
-    _ -> filename:join([filename:basedir(user_data,[]),"Hermes",erlang:node()])
+    ok -> Res = Path;
+    _ -> Res = filename:join([filename:basedir(user_data,[]),"Hermes",erlang:node()]) ++ "/"
   end,
-  todo_parse.
+  Res ++ erlang:binary_to_list(Q).
