@@ -139,9 +139,13 @@ pull(Count, IoDevice, DlvrTag) ->
   end.
 
 handle_message(Content, IoDevice) ->
-  [{<<"uid">>, _, DevUID}] = Content#amqp_msg.props#'P_basic'.headers,
-  Payload = Content#amqp_msg.payload,
-  file:write(IoDevice, erlang:term_to_binary({DevUID,Payload})).
+  case Content#amqp_msg.props#'P_basic'.headers of
+    [{<<"uid">>, _, DevUID}] ->
+      Payload = Content#amqp_msg.payload,
+      file:write(IoDevice, erlang:term_to_binary({DevUID,Payload}));
+    _ ->
+      'ok'
+    end.
 
 
 %%% push galileosky messages ---------------------------------------------------
@@ -189,7 +193,8 @@ nack_msgs(Channel, DlvrTag) ->
   end.
 
 parse_path(Path, _VNode, Q) ->
-  case P = filelib:ensure_dir(erlang:binary_to_list(Path) ++ "/") of
+  P = erlang:binary_to_list(Path) ++ "/",
+  case filelib:ensure_dir(P) of
     ok -> P ++ erlang:binary_to_list(Q);
     _ -> filename:join([filename:basedir(user_data,[]),"Hermes",erlang:node(),erlang:binary_to_list(Q)])
   end.
