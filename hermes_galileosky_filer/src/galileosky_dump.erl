@@ -6,6 +6,10 @@
 
 -behaviour(gen_server).
 
+-ifdef(EXPORTALL).
+-compile(export_all).
+-endif.
+
 -export([start_link/0]).
 -export([
         init/1,
@@ -99,12 +103,12 @@ handle_queues(Qs, Path) ->
       'ok';
     _ ->
       %% (?) start supervisor with `all_significant` automatic shutdown
-      handle_queue(VNode, Q)
+      handle_queue(VNode, Q, Path)
   end,
   handle_queues(QsTail, Path).
 
 %% sub to Q, open file to write, spawn dump worker
-handle_queue(VNode, Q) ->
+handle_queue(VNode, Q, Path) ->
   Channel = persistent_term:get({hermes_galileosky_filer,rabbitmq_channel}),
   #'queue.declare_ok'{message_count = Count} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
   case Count of
@@ -148,7 +152,7 @@ handle_message(Content, IoDevice) ->
 %                              )
 %% DevUID must be in header, cause Galileosky device may translate packets from another Galileosky device
 %% (!) TODO: cause input will grow up snowball-like, need to save last position
-restore_queues(Path) ->
+restore_queues(_Path) ->
   todo_push.
 
 %%%-----------------------------------------------------------------------------
@@ -173,7 +177,7 @@ ack_msg(Channel, DlvrTag) ->
   end.
 
 nack_msgs(Channel, DlvrTag) ->
-  case amqp_channel:call(Channel,#'basic.nack'{delivery_tag = DlvrTag, multiplie = true, requeue = true}) of
+  case amqp_channel:call(Channel,#'basic.nack'{delivery_tag = DlvrTag, multiple = true, requeue = true}) of
     ok ->
       'ok';
       % loop(Channel);
@@ -184,9 +188,8 @@ nack_msgs(Channel, DlvrTag) ->
       {ok, <<"Closing channel">>}
   end.
 
-parse_path(Path, VNode, Q) ->
-  case Path = filelib:ensure_dir(erlang:binary_to_list(Path) ++ "/") of
-    ok -> Res = Path;
-    _ -> Res = filename:join([filename:basedir(user_data,[]),"Hermes",erlang:node()]) ++ "/"
-  end,
-  Res ++ erlang:binary_to_list(Q).
+parse_path(Path, _VNode, Q) ->
+  case P = filelib:ensure_dir(erlang:binary_to_list(Path) ++ "/") of
+    ok -> P ++ erlang:binary_to_list(Q);
+    _ -> filename:join([filename:basedir(user_data,[]),"Hermes",erlang:node(),erlang:binary_to_list(Q)])
+  end.
