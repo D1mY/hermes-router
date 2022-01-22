@@ -51,7 +51,8 @@ rmq_connect() ->
   Connection = intercourse(?Q_FILER, amqp_connection:start(#amqp_params_direct{},?Q_FILER)),
   %% subscribe to cfg queue
   Channel = intercourse(Connection, amqp_connection:open_channel(Connection)),
-  ok = persistent_term:put({hermes_galileosky_filer,rabbitmq_channel},Channel),
+  Channel1 = intercourse(Connection, amqp_connection:open_channel(Connection)),
+  ok = persistent_term:put({hermes_galileosky_filer,rabbitmq_channel}, Channel1),
   % #'exchange.declare_ok'{} = amqp_channel:call(Channel, #'exchange.declare'{exchange = <<"hermes.fanout">>, type = <<"fanout">>, passive = false, durable = true, auto_delete = false, internal = false}),
   % #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes">>, durable = true}),
   % #'queue.bind_ok'{} = amqp_channel:call(Channel,#'queue.bind'{queue = <<"hermes">>, exchange = <<"hermes.fanout">>}),

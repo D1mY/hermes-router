@@ -1,0 +1,9 @@
+.sw?
+.*.sw?
+*.beam
+/.erlang.mk/
+/cover/
+/deps/
+/doc/
+/logs/
+/plugins/
