@@ -49,8 +49,9 @@ code_change(_OldVsn, State, _Extra) ->
 rmq_connect() ->
   %% create RabbitMQ connection
   Connection = intercourse(?Q_FILER, amqp_connection:start(#amqp_params_direct{},?Q_FILER)),
-  %% subscribe to cfg queue
+  %% cmd channel
   Channel = intercourse(Connection, amqp_connection:open_channel(Connection)),
+  %% workers channel
   Channel1 = intercourse(Connection, amqp_connection:open_channel(Connection)),
   ok = persistent_term:put({hermes_galileosky_filer,rabbitmq_channel}, Channel1),
   % #'exchange.declare_ok'{} = amqp_channel:call(Channel, #'exchange.declare'{exchange = <<"hermes.fanout">>, type = <<"fanout">>, passive = false, durable = true, auto_delete = false, internal = false}),
@@ -64,7 +65,7 @@ rmq_connect() ->
   loop(Channel),
   %% ending
   amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
-  rabbit_log:info("Hermes Galileosky filer close channel: ~p~n", [amqp_channel:close(Channel)]),
+  rabbit_log:info("Hermes Galileosky filer close channels: ~p, ~p~n", [amqp_channel:close(Channel), amqp_channel:close(Channel1)]),
   persistent_term:erase({hermes_galileosky_filer,rabbitmq_channel}),
   rabbit_log:info("Hermes Galileosky filer close connection: ~p~n", [amqp_connection:close(Connection)]),
   rabbit_log:info("Hermes Galileosky filer ended",[]).
@@ -111,7 +112,7 @@ handle_queues(Qs, Path) ->
 %% sub to Q, open file to write, spawn dump worker
 handle_queue(VNode, Q, Path) ->
   Channel = persistent_term:get({hermes_galileosky_filer,rabbitmq_channel}),
-  #'queue.declare_ok'{message_count = Count} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
+  #'queue.declare_ok'{message_count = Count} = amqp_channel:call(Channel, #'queue.declare'{queue = Q}),
   case Count of
     0 ->
       'ok';
