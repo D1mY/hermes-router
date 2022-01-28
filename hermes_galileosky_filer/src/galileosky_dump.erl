@@ -11,8 +11,6 @@
 -compile(export_all).
 -endif.
 
--compile([nowarn_unused_function]).
-
 -export([start_link/0]).
 -export([
         init/1,
@@ -22,8 +20,6 @@
         terminate/2,
         code_change/3
         ]).
-
--export([handle_content/1]).
 
 start_link() ->
     gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
@@ -52,10 +48,8 @@ code_change(_OldVsn, State, _Extra) ->
 rmq_connect() ->
   %% create RabbitMQ connection
   Connection = intercourse(?Q_FILER, amqp_connection:start(#amqp_params_direct{},?Q_FILER)),
-  rabbit_log:info("Connection: ~p", [Connection]),
   %% cmd channel
   Channel = intercourse(Connection, amqp_connection:open_channel(Connection)),
-  rabbit_log:info("Channel: ~p", [Channel]),
   ok = persistent_term:put({hermes_galileosky_filer,rabbitmq_connection}, Connection),
   #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = ?Q_FILER, auto_delete = true}),
   #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = ?Q_FILER}, self()),
