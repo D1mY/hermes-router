@@ -64,8 +64,6 @@ pull(Count, IoDevice, DlvrTag) ->
       pull(Count - 1, IoDevice, DlvrTag1);
     _ ->
       pull(Count, IoDevice, DlvrTag)
-  after
-    0 -> 'ok'
   end.
 
 handle_message(Content, IoDevice) ->
@@ -98,8 +96,8 @@ restore_queues(Path) ->
           'ok';
         _ ->
           rabbit_log:info("Hermes Galileosky filer: found dump ~p",[File]),
-          Q = string:trim(File, leading, Path ++ "/hermes_galileosky_qdump_"),
-          handle_file(File, erlang:list_to_binary(Q))
+          Q = string:trim(File, leading, erlang:binary_to_list(Path) ++ "/hermes_galileosky_qdump_"),
+          handle_file(File, Q)
       end
     end,
     []
@@ -107,21 +105,24 @@ restore_queues(Path) ->
   rabbit_log:info("Hermes Galileosky filer restore finished", []).
 
 handle_file(File, Q) ->
+  Connection = persistent_term:get({hermes_galileosky_filer,rabbitmq_connection}),
+  {ok, Channel} = amqp_connection:open_channel(Connection),
+  #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable=true}),
   {ok, IoDevice} = file:open(File, [read, binary]),
   try
-    handle_dump(IoDevice, Q)
+    handle_dump(IoDevice, Q, Channel)
   after
     file:close(IoDevice)
   end.
 
-handle_dump(IoDevice, Q) ->
+handle_dump(IoDevice, Q, Channel) ->
   case file:read(IoDevice, 4) of
     {ok, <<BinTermSize:4/integer-unit:8>>} ->
       {ok, Data} = file:read(IoDevice, BinTermSize),
       case erlang:binary_to_term(Data) of
         {DevUID, Payload} ->
-          push(Q, DevUID, Payload),
-          handle_dump(IoDevice, Q);
+          push(Channel, Q, DevUID, Payload),
+          handle_dump(IoDevice, Q, Channel);
         _ ->
           'ok'
       end;
@@ -129,9 +130,7 @@ handle_dump(IoDevice, Q) ->
       'ok'
   end.
 
-push(Q, DevUID, Payload) ->
-  Connection = persistent_term:get({hermes_galileosky_filer,rabbitmq_connection}),
-  {ok, Channel} = amqp_connection:open_channel(Connection),
+push(Channel, Q, DevUID, Payload) ->
   amqp_channel:call(Channel,
                     #'basic.publish'{routing_key = Q},
                     #amqp_msg{props = #'P_basic'{delivery_mode = 2, headers = [{<<"uid">>, longstr, DevUID}], content_encoding = <<"base64">>}, payload = [Payload]}
@@ -153,6 +152,6 @@ nack_msgs(Channel, DlvrTag) ->
 parse_path(Path, _VNode, Q) ->
   P = erlang:binary_to_list(Path) ++ "/",
   case filelib:ensure_dir(P) of
-    ok -> P ++ erlang:binary_to_list(Q);
+    ok -> P ++ "hermes_galileosky_qdump_" ++ erlang:binary_to_list(Q);
     _ -> filename:join([filename:basedir(user_data,[]),"Hermes",erlang:node(),"hermes_galileosky_qdump_" ++ erlang:binary_to_list(Q)])
   end.
