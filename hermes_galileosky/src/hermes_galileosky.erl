@@ -12,7 +12,7 @@
                     {requires,    direct_client}]}).
 
 start(normal, []) ->
-    erlang:spawn(hermes_sup,start_link,[]),
+    erlang:spawn(hermes_galileosky_sup,start_link,[]),
     ok.
 
 stop(_State) ->

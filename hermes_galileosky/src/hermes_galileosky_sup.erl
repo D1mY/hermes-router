@@ -3,7 +3,7 @@
 %% @end
 %%%-------------------------------------------------------------------
 
--module(hermes_sup).
+-module(hermes_galileosky_sup).
 
 -behaviour(supervisor).
 
