@@ -5,32 +5,28 @@
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
 
 -export([
-        start/1
+        start/2
         ]).
 
-start(Q) when erlang:is_bitstring(Q) ->
-  packet_decoder(Q);
-start(Any) ->
-  rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p~n", [erlang:process_info(self(), registered_name),Any]).
+start(Q, Connection) when erlang:is_bitstring(Q) ->
+  packet_decoder(Q, Connection);
+start(Any, _) ->
+  rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [erlang:process_info(self(), registered_name), Any]).
 
-packet_decoder({not_found, Q}) ->
-  rabbit_log:info("Hermes Galileosky connection not found by pusher for ~p~n",[Q]);
-packet_decoder(Q) ->
-  case Connection = persistent_term:get({hermes_galileosky_broker,rabbitmq_connection}, not_found) of
-    not_found -> packet_decoder({not_found, Q});
-    _ -> ok
-  end,
+% packet_decoder({not_found, Q}) ->
+%   rabbit_log:info("Hermes Galileosky connection not found by pusher for ~p~n",[Q]);
+packet_decoder(Q, Connection) ->
   Channel = intercourse(Q, Connection, amqp_connection:open_channel(Connection)),
-  #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable=true}),
+  #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
   #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = Q}, self()),
   loop(Channel, []),
   amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
-  rabbit_log:info("Hermes Galileosky pusher ~p channel close: ~p~n", [Q, amqp_channel:close(Channel)]).
+  rabbit_log:info("Hermes Galileosky pusher ~p channel close: ~p", [Q, amqp_channel:close(Channel)]).
 
 intercourse(_, _, {ok, Channel}) -> Channel;
 intercourse(Q, Connection, {error, _}) ->
   timer:sleep(1000),
-  intercourse(Q, Connection, amqp_connection:open_channel(Connection,1)).
+  intercourse(Q, Connection, amqp_connection:open_channel(Connection, 1)).
 
 loop(Channel, CfgMap) ->
   receive
@@ -44,7 +40,7 @@ loop(Channel, CfgMap) ->
     {cfg,Payload} -> % {cfg,_} received first of all
       handle_cfg(Channel, Payload);
     {stop,CallersPid} ->
-      rabbit_log:info("Hermes Galileosky pusher ~p stopped by broker ~p~n", [erlang:process_info(self(), registered_name),CallersPid]);
+      rabbit_log:info("Hermes Galileosky pusher ~p stopped by broker ~p~n", [erlang:process_info(self(), registered_name), CallersPid]);
     #'basic.cancel_ok'{} ->
       {ok, <<"Cancel">>};
      % Drop other not valid messages

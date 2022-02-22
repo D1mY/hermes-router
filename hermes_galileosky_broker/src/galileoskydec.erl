@@ -48,8 +48,11 @@ handle_cast(Msg, #state{channel = undefined} = State) ->
 handle_cast(configure, State) ->
     State1 = configure(State),
     {noreply, State1};
+handle_cast({start_pusher, [DevUID, CfgData]}, State) ->
+    start_pusher(DevUID, CfgData, State),
+    {noreply, State};
 handle_cast(_, State) ->
-    {noreply,State}.
+    {noreply, State}.
 
 handle_info({#'basic.deliver'{delivery_tag = DlvrTag}, Content},
              State = #state{channel = Channel}) ->
@@ -61,95 +64,77 @@ handle_info(#'basic.cancel_ok'{}, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{connection = Connection, channel = Channel, consumer_tag = ConsTag}) ->
+terminate(Reason, #state{connection = Connection, channel = Channel, consumer_tag = ConsTag}) ->
     amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
     amqp_channel:close(Channel),
     amqp_connection:close(Connection),
-    rabbit_log:info("Hermes Galileosky broker terminated",[]),
+    rabbit_log:info("Hermes Galileosky broker terminated: ~p",[Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 %%%----------------------------------------------------------------------------
-
-% %%% (deprecated)
-% configure() ->
-%   configure(decmap:unfold()).
-% configure(true) ->
-%   rmq_connect();
-% configure(false) ->
-%   rabbit_log:info("Hermes Galileosky decmap unfold error~n",[]).
-
-% rmq_connect() ->
-%   %% create RabbirMQ connection for self() and spawn_link() prcss
-%   Connection = intercourse(<<"hermes_galileosky_broker">>, amqp_connection:start(#amqp_params_direct{},<<"hermes_galileosky_broker">>)),
-%   ok = persistent_term:put({hermes_galileosky_broker,rabbitmq_connection},Connection),
-%   %% subscribe to cfg queue
-%   Channel = intercourse(Connection, amqp_connection:open_channel(Connection)),
-%   #'exchange.declare_ok'{} = amqp_channel:call(Channel, #'exchange.declare'{exchange = <<"hermes.fanout">>, type = <<"fanout">>, passive = false, durable = true, auto_delete = false, internal = false}),
-%   #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes">>, durable = true}),
-%   #'queue.bind_ok'{} = amqp_channel:call(Channel,#'queue.bind'{queue = <<"hermes">>, exchange = <<"hermes.fanout">>}),
-%   #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes_galileosky_broker_cfg">>, durable = true}),
-%   #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}, self()),
-%   %% loading stored cfg
-%   read_cfg_file(cfg_path()),
-%   %% bgn listen cfg queue
-%   loop(Channel),
-%   %% ending
-%   amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
-%   rabbit_log:info("Hermes Galileosky broker close channel: ~p~n", [amqp_channel:close(Channel)]),
-%   rabbit_log:info("Hermes Galileosky broker close connection: ~p~n", [amqp_connection:close(Connection)]),
-%   persistent_term:erase({hermes_galileosky_broker,rabbitmq_connection}),
-%   rabbit_log:info("Hermes Galileosky broker ended",[]).
-
-% %%% cfg queue loop (deprecated)
-% loop(Channel) ->
-%   receive
-%     {#'basic.deliver'{delivery_tag = DlvrTag}, Content} ->
-%       handle_content(Content),
-%       ack_msg(Channel, DlvrTag);
-%     #'basic.cancel_ok'{} ->
-%       {ok, <<"Cancel">>};
-%     _ -> loop(Channel)
-%   end.
-
 handle_content(Content) ->
   case Content#amqp_msg.props#'P_basic'.headers of
-    [{<<"uid_psh">>,_,DevUID}] ->
+    [{<<"uid_psh">>, _, DevUID}] ->
       {value,CfgData,_} = parse_cfg(Content#amqp_msg.payload),
       handle_cfg_file(DevUID, CfgData),
-      start_pusher(DevUID, CfgData);
-    [{<<"uid_rmv">>,_,DevUID}] ->
+      gen_server:cast({start_pusher, [DevUID, CfgData]});
+    %   start_pusher(DevUID, CfgData, Connection);
+    [{<<"uid_rmv">>, _, DevUID}] ->
       handle_cfg_file(DevUID, <<"uid_rmv">>),
       stop_pusher(erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>));
-    _ -> 'not_valid'
+    _ ->
+      'not_valid'
   end.
 
-start_pusher(Dev, CfgDev) ->
-  PuName = erlang:binary_to_atom(<<"galileosky_pusher_", Dev/binary>>),
-  % case lists:member(PuName,erlang:registered()) of
-  case supervisor:start_child(hermes_galileosky_broker_sup,PuName) of
-    % false ->
-    {error, already_started} ->
-      erlang:register(PuName,erlang:spawn_link(galileosky_pusher,start,[Dev]));
-    % true ->
+start_pusher(DevUID, CfgData, #state{connection = Connection}) ->
+  PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
+  case supervisor:start_child(galileosky_pusher_sup,
+                              #{id => PuName,
+                                start => {galileosky_pusher, start, [DevUID, Connection]},
+                                restart => transient,
+                                shutdown => 10000,
+                                type => worker,
+                                modules => [galileosky_pusher]}) of
+    {error, already_present} ->
+        supervisor:restart_child(galileosky_pusher_sup, PuName),
+        PuName ! {cfg, CfgData};
+    {error, {already_started, _}} ->
+        PuName ! {cfg, CfgData};
+    {error, What} ->
+      rabbit_log:info("Hermes Galileosky broker: pusher for ~p start error ~p", [DevUID, What]);
     _ ->
-      'ok'
-    end,
-  PuName ! {cfg,CfgDev}.
+        PuName ! {cfg, CfgData}
+    end.
 
-stop_pusher(Dev) ->
-  case lists:member(Dev,erlang:registered()) of
-    false ->
+stop_pusher(PuName) ->
+  case supervisor:get_childspec(galileosky_pusher_sup, PuName) of
+    {error, not_found} ->
       'ok';
-    true ->
-      Dev ! {stop,self()}
+    _ ->
+      PuName ! {stop, self()},
+      supervisor:delete_child(galileosky_pusher_sup, PuName);
   end.
 
 %%%-----------------------------------------------------------------------------
 %%% helpers
+intercourse() ->
+    {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
+    {ok, Channel} = amqp_connection:open_channel(Connection),
+    State = #state{connection = Connection, channel = Channel}.
+
+configure(State = #state{channel = Channel}) ->
+    #'exchange.declare_ok'{} = amqp_channel:call(Channel, #'exchange.declare'{exchange = <<"hermes.fanout">>, type = <<"fanout">>, passive = false, durable = true, auto_delete = false, internal = false}),
+    #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes">>, durable = true}),
+    #'queue.bind_ok'{} = amqp_channel:call(Channel,#'queue.bind'{queue = <<"hermes">>, exchange = <<"hermes.fanout">>}),
+    #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes_galileosky_broker_cfg">>, durable = true}),
+    #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}, self()),
+    read_cfg_file(cfg_path()),
+    State1 = State#state{consumer_tag = ConsTag}.
+
 ack_msg(Channel, DlvrTag) ->
-  case amqp_channel:call(Channel,#'basic.ack'{delivery_tag = DlvrTag}) of
+  case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of
     ok ->
       loop(Channel);
     blocked ->
@@ -160,12 +145,12 @@ ack_msg(Channel, DlvrTag) ->
   end.
 
 cfg_path() ->
-  Path = filename:join([filename:basedir(user_config,[]),"Hermes",erlang:node()]),
+  Path = filename:join([filename:basedir(user_config,[]), "Hermes", erlang:node()]),
   case filelib:ensure_dir(Path ++ "/") of
     ok ->
       Path;
     {error,Reason} ->
-      rabbit_log:info("Hermes Galileosky broker: cfg files location ~p error: ~p",[Path,Reason]),
+      rabbit_log:info("Hermes Galileosky broker: cfg files location ~p error: ~p", [Path, Reason]),
       'error'
   end.
 
@@ -179,11 +164,12 @@ read_cfg_file(Path) ->
     fun(File,_) ->
       case file:read_file(File) of
         {ok, T} ->
-          rabbit_log:info("Hermes Galileosky broker: found cfg ~p",[File]),
+          rabbit_log:info("Hermes Galileosky broker: found cfg ~p", [File]),
           UID = string:trim(File, leading, Path ++ "/hermes_galileosky_"),
-          start_pusher(erlang:list_to_binary(UID),erlang:binary_to_term(T));
+          gen_server:cast({start_pusher, [erlang:list_to_binary(UID), erlang:binary_to_term(T)]}),
+        %   start_pusher(erlang:list_to_binary(UID), erlang:binary_to_term(T));
         {error, Reason} ->
-          rabbit_log:info("Hermes Galileosky broker: cfg ~p load error: ~p",[File,Reason])
+          rabbit_log:info("Hermes Galileosky broker: cfg ~p load error: ~p", [File, Reason])
       end
     end,
     []
@@ -200,29 +186,6 @@ handle_cfg_file(DevUID, CfgData) ->
       file:write_file(File,erlang:term_to_binary(CfgData))
   end.
 
-
-intercourse() ->
-    {ok, Connection} = amqp_connection:start(#amqp_params_direct{},<<"hermes_galileosky_broker">>),
-    {ok, Channel} = amqp_connection:open_channel(Connection),
-    State = #state{connection = Connection, channel = Channel}.
-configure(State = #state{channel = Channel}) ->
-    #'exchange.declare_ok'{} = amqp_channel:call(Channel, #'exchange.declare'{exchange = <<"hermes.fanout">>, type = <<"fanout">>, passive = false, durable = true, auto_delete = false, internal = false}),
-    #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes">>, durable = true}),
-    #'queue.bind_ok'{} = amqp_channel:call(Channel,#'queue.bind'{queue = <<"hermes">>, exchange = <<"hermes.fanout">>}),
-    #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = <<"hermes_galileosky_broker_cfg">>, durable = true}),
-    #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}, self()),
-    read_cfg_file(cfg_path()),
-    State1 = State#state{consumer_tag = ConsTag}.
-
-
-intercourse(_, {ok, Res}) -> Res;
-intercourse(X, {error, _}) ->
-  timer:sleep(3000),
-  case erlang:is_bitstring(X) of
-    true -> rmq_connect();
-    false -> intercourse(X, amqp_connection:open_channel(X))
-  end.
-
 parse_cfg(<<>>) ->
   rabbit_log:info("Hermes Galileosky broker: default cfg request",[]),
   {value,[],[]};
@@ -234,10 +197,10 @@ parse_cfg(Payload) ->
         {ok,ExprLst} ->
           erl_eval:exprs(ExprLst, []);
         {error,ErrInf} ->
-          rabbit_log:info("Hermes Galileosky broker: parse expressions error: ~p",[ErrInf]),
+          rabbit_log:info("Hermes Galileosky broker: parse expressions error: ~p", [ErrInf]),
           {value,[],[]}
       end;
     {error,ErrInf,ErrLoc} ->
-      rabbit_log:info("Hermes Galileosky broker: cfg read error: ~p~n location: ~p",[ErrInf,ErrLoc]),
+      rabbit_log:info("Hermes Galileosky broker: cfg read error: ~p~n location: ~p", [ErrInf, ErrLoc]),
       {value,[],[]}
   end.
