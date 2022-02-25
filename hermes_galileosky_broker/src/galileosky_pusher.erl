@@ -37,10 +37,10 @@ loop(Channel, CfgMap) ->
         ok -> loop(Channel, CfgMap);
         Any -> Any
       end;
-    {cfg,Payload} -> % {cfg,_} received first of all
+    {cfg, Payload} -> % {cfg,_} received first of all
       handle_cfg(Channel, Payload);
-    {stop,CallersPid} ->
-      rabbit_log:info("Hermes Galileosky pusher ~p stopped by broker ~p~n", [erlang:process_info(self(), registered_name), CallersPid]);
+    {stop, CallersPid} ->
+      rabbit_log:info("Hermes Galileosky pusher ~p stopped by broker ~p", [erlang:process_info(self(), registered_name), CallersPid]);
     #'basic.cancel_ok'{} ->
       {ok, <<"Cancel">>};
      % Drop other not valid messages
@@ -73,7 +73,7 @@ publish_points(Channel, Res, DlvrTag) ->
   end.
 
 ack_points(Channel, DlvrTag) ->
-  case amqp_channel:call(Channel,#'basic.ack'{delivery_tag = DlvrTag}) of
+  case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of
     ok -> ok;
     blocked -> timer:sleep(3000),
       ack_points(Channel, DlvrTag);
@@ -81,9 +81,9 @@ ack_points(Channel, DlvrTag) ->
   end.
 
 push_data(_, <<>>, _, DevUID, Acc, []) -> % message of 1 point
-  [{lists:flatten(Acc,[{<<"dev_uid">>,DevUID}])}];
+  [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])}];
 push_data(_, <<>>, _, DevUID, Acc, TArr) -> % message of many points
-  [{lists:flatten(Acc,[{<<"dev_uid">>,DevUID}])}|TArr];
+  [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])}|TArr];
 push_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
   <<Tag:8,Tail/binary>> = Payload,
   case Tag >= PrevTag of
@@ -93,8 +93,8 @@ push_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
           <<Data:Len/binary,Tail1/binary>> = Tail,
           push_data(CfgMap, Tail1, Tag, DevUID, [ExtractFun(Data)|Acc], TArr);
         not_found-> 
-          push_data(CfgMap, <<>>, Tag, DevUID, [{lists:flatten(Acc,[{<<"unknown_galileosky_protocol_tag">>,Tag}])}], TArr)
+          push_data(CfgMap, <<>>, Tag, DevUID, [{lists:flatten(Acc, [{<<"unknown_galileosky_protocol_tag">>, Tag}])}], TArr)
       end;
     false -> % lot of points in message
-      push_data(CfgMap, Payload, 0, DevUID, [], [{lists:flatten(Acc,[{<<"dev_uid">>,DevUID}])}|TArr])
+      push_data(CfgMap, Payload, 0, DevUID, [], [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])}|TArr])
   end.
