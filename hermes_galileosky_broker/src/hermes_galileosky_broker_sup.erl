@@ -31,7 +31,7 @@ init([]) ->
                 restart => permanent,
                 shutdown => 10000,
                 type => worker,
-                modules => [falileoskydec]},
+                modules => [galileoskydec]},
              #{id => galileosky_pusher_sup,
                 start => {galileosky_pusher_sup, start_link, []},
                 restart => permanent,
