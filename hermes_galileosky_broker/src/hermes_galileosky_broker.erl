@@ -11,8 +11,11 @@
                                    [normal, []]}},
                     {requires,    direct_client}]}).
 
+% start(normal, []) ->
+%     erlang:spawn(hermes_galileosky_broker_sup,start_link,[]),
+%     ok.
 start(normal, []) ->
-    erlang:spawn(hermes_galileosky_broker_sup,start_link,[]),
+    hermes_galileosky_broker_sup:start_link(),
     ok.
 
 stop(_State) ->
