@@ -1,6 +1,6 @@
 PROJECT = hermes_galileosky_broker
 PROJECT_DESCRIPTION = Hermes Galileosky broker
-PROJECT_VERSION = 0.0.0
+PROJECT_MOD = hermes_galileosky_broker
 
 DEPS = rabbit_common rabbit amqp_client
 

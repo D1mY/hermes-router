@@ -75,7 +75,6 @@ handle_content(Content) ->
             {value, CfgData, _} = parse_cfg(Content#amqp_msg.payload),
             handle_cfg_file(DevUID, CfgData),
             gen_server:cast(galileoskydec, {start_pusher, [DevUID, CfgData]});
-        %   start_pusher(DevUID, CfgData, Connection);
         [{<<"uid_rmv">>, _, DevUID}] ->
             handle_cfg_file(DevUID, <<"uid_rmv">>),
             stop_pusher(erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>));
@@ -201,7 +200,6 @@ read_cfg_file(Path) ->
                     gen_server:cast(galileoskydec,
                         {start_pusher, [erlang:list_to_binary(UID), erlang:binary_to_term(T)]}
                     );
-                %   start_pusher(erlang:list_to_binary(UID), erlang:binary_to_term(T));
                 {error, Reason} ->
                     rabbit_log:info("Hermes Galileosky broker: cfg ~p load error: ~p", [
                         File, Reason

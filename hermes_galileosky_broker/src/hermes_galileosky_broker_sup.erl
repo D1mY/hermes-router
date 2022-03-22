@@ -12,16 +12,6 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-% init([]) ->
-%     {ok, {{one_for_one, 3, 10},
-%           [{galileoskydec,
-%             {galileoskydec, start_link, []},
-%             permanent,
-%             10000,
-%             worker,
-%             [galileoskydec]}
-%           ]}}.
-
 init([]) ->
     {ok, {#{strategy => one_for_all,
             intensity => 3,
