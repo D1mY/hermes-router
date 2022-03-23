@@ -7,11 +7,13 @@
 
 -behaviour(supervisor).
 
+-define(DEBUGMODE, false).
+
 -export([start_link/0, init/1]).
 
 start_link() ->
     Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    sys:trace(galileosky_pusher_sup, true),
+    sys:trace(galileosky_pusher_sup, ?DEBUGMODE),
     Res.
 
 init([]) ->

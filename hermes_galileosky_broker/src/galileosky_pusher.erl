@@ -17,6 +17,7 @@ start(Any, _) ->
 % packet_decoder({not_found, Q}) ->
 %   rabbit_log:info("Hermes Galileosky connection not found by pusher for ~p~n",[Q]);
 packet_decoder(Q, Connection) ->
+  erlang:register(erlang:binary_to_atom(<<"galileosky_pusher_", Q/binary>>),self()),
   Channel = intercourse(Q, Connection, amqp_connection:open_channel(Connection)),
   #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
   #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = Q}, self()),
