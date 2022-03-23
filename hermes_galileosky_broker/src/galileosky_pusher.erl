@@ -5,11 +5,12 @@
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
 
 -export([
-        start/2
+        start/2,
+        packet_decoder/2
         ]).
 
 start(Q, Connection) when erlang:is_bitstring(Q) ->
-  packet_decoder(Q, Connection);
+  {ok, erlang:spawn(?MODULE, packet_decoder, [Q, Connection])};
 start(Any, _) ->
   rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [erlang:process_info(self(), registered_name), Any]).
 

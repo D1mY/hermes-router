@@ -41,6 +41,9 @@ handle_call(_Msg, _From, State) ->
 handle_cast({start_pusher, [DevUID, CfgData]}, State) ->
     start_pusher(DevUID, CfgData, State),
     {noreply, State};
+handle_cast(restore_cfg, State) ->
+    read_cfg_file(cfg_path()),
+    {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
 
@@ -55,6 +58,7 @@ handle_info(#'basic.cancel_ok'{}, State) ->
     {stop, normal, State};
 handle_info(configure, _State) ->
     State = configure(),
+    gen_server:cast(galileoskydec, restore_cfg),
     {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
@@ -84,12 +88,14 @@ handle_content(Content) ->
 
 start_pusher(DevUID, CfgData, #state{connection = Connection}) ->
     PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
+    rabbit_log:info("---- start_pusher ~p", [PuName]),
     case
         supervisor:start_child(
             galileosky_pusher_sup,
             #{
                 id => PuName,
                 start => {galileosky_pusher, start, [DevUID, Connection]},
+                % start => {galileosky_pusher_sup, start_child, [DevUID, Connection]},
                 restart => transient,
                 shutdown => 10000,
                 type => worker,
@@ -151,15 +157,12 @@ configure(State = #state{channel = Channel}) ->
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}, self()
     ),
-    read_cfg_file(cfg_path()),
+    % read_cfg_file(cfg_path()),
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
     {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
     {ok, Channel} = amqp_connection:open_channel(Connection),
-    rabbit_log:info("---- debug hi from 'intercourse/0' ~p", [
-        #state{connection = Connection, channel = Channel}
-    ]),
     #state{connection = Connection, channel = Channel}.
 
 ack_msg(Channel, DlvrTag) ->
