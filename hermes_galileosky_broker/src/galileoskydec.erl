@@ -30,7 +30,7 @@ init([]) ->
         true ->
             self() ! configure;
         false ->
-            rabbit_log:info("Hermes Galileosky broker: decmap unfold error during init", [])
+            rabbit_log:info("Hermes Galileosky broker: decmap unfold error during init")
     end,
     {ok, #state{}}.
 
@@ -63,7 +63,14 @@ handle_info(configure, _State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(Reason, #state{connection = Connection, channel = Channel, consumer_tag = ConsTag}) ->
+terminate(
+    Reason,
+    #state{
+        connection = Connection,
+        channel = Channel,
+        consumer_tag = ConsTag
+    }
+) ->
     amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
     amqp_channel:close(Channel),
     amqp_connection:close(Connection),
@@ -88,14 +95,12 @@ handle_content(Content) ->
 
 start_pusher(DevUID, CfgData, #state{connection = Connection}) ->
     PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
-    rabbit_log:info("---- start_pusher ~p", [PuName]),
     case
         supervisor:start_child(
             galileosky_pusher_sup,
             #{
                 id => PuName,
                 start => {galileosky_pusher, start, [DevUID, Connection]},
-                % start => {galileosky_pusher_sup, start_child, [DevUID, Connection]},
                 restart => transient,
                 shutdown => 10000,
                 type => worker,
@@ -157,7 +162,6 @@ configure(State = #state{channel = Channel}) ->
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}, self()
     ),
-    % read_cfg_file(cfg_path()),
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
@@ -200,7 +204,8 @@ read_cfg_file(Path) ->
                 {ok, T} ->
                     rabbit_log:info("Hermes Galileosky broker: found cfg ~p", [File]),
                     UID = string:trim(File, leading, Path ++ "/hermes_galileosky_"),
-                    gen_server:cast(galileoskydec,
+                    gen_server:cast(
+                        galileoskydec,
                         {start_pusher, [erlang:list_to_binary(UID), erlang:binary_to_term(T)]}
                     );
                 {error, Reason} ->
@@ -224,7 +229,7 @@ handle_cfg_file(DevUID, CfgData) ->
     end.
 
 parse_cfg(<<>>) ->
-    rabbit_log:info("Hermes Galileosky broker: default cfg request", []),
+    rabbit_log:info("Hermes Galileosky broker: default cfg request"),
     {value, [], []};
 parse_cfg(Payload) ->
     CfgData = erlang:binary_to_list(Payload),
