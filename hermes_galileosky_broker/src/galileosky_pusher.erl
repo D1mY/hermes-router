@@ -10,7 +10,7 @@
         ]).
 
 start(Q, Connection) when erlang:is_bitstring(Q) ->
-  {ok, erlang:spawn(?MODULE, packet_decoder, [Q, Connection])};
+  {ok, erlang:spawn_link(?MODULE, packet_decoder, [Q, Connection])};
 start(Any, _) ->
   rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [erlang:process_info(self(), registered_name), Any]).
 
@@ -21,6 +21,7 @@ packet_decoder(Q, Connection) ->
   Channel = intercourse(Q, Connection, amqp_connection:open_channel(Connection)),
   #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
   #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = Q}, self()),
+  %erlang:link(Channel), % is link to channels pid possible?
   loop(Channel, []),
   amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
   rabbit_log:info("Hermes Galileosky pusher ~p channel close: ~p", [Q, amqp_channel:close(Channel)]).
@@ -28,7 +29,7 @@ packet_decoder(Q, Connection) ->
 intercourse(_, _, {ok, Channel}) -> Channel;
 intercourse(Q, Connection, {error, _}) ->
   timer:sleep(1000),
-  intercourse(Q, Connection, amqp_connection:open_channel(Connection, 1)).
+  intercourse(Q, Connection, amqp_connection:open_channel(Connection)).
 
 loop(Channel, CfgMap) ->
   receive
@@ -45,6 +46,8 @@ loop(Channel, CfgMap) ->
       rabbit_log:info("Hermes Galileosky pusher ~p stopped by broker ~p", [erlang:process_info(self(), registered_name), CallersPid]);
     #'basic.cancel_ok'{} ->
       {ok, <<"Cancel">>};
+    {'EXIT', From, Reason} ->
+      rabbit_log:info("Hermes Galileosky pusher ~p stopped by ~p with ~p", [erlang:process_info(self(), registered_name), From, Reason]);
      % Drop other not valid messages
     _ -> loop(Channel, CfgMap)
   end.

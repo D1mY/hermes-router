@@ -60,6 +60,8 @@ handle_info(configure, _State) ->
     State = configure(),
     gen_server:cast(galileoskydec, restore_cfg),
     {noreply, State};
+handle_info({'EXIT', _From, Reason}, State) ->
+      terminate(Reason, State);
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -165,6 +167,7 @@ configure(State = #state{channel = Channel}) ->
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
+    % TODO: garbage previous Connection from ets 'connection_created' table
     {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
     {ok, Channel} = amqp_connection:open_channel(Connection),
     #state{connection = Connection, channel = Channel}.
