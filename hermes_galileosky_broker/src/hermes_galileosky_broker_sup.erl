@@ -25,7 +25,6 @@ init([]) ->
              #{id => galileosky_pusher_sup,
                 start => {galileosky_pusher_sup, start_link, []},
                 restart => permanent,
-                shutdown => 10000,
                 type => supervisor,
                 modules => [galileosky_pusher_sup]}
             ]}}.

@@ -14,6 +14,7 @@
 start_link() ->
     Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
     sys:trace(galileosky_pusher_sup, ?DEBUGMODE),
+    gen_server:cast(galileoskydec, restore_cfg),
     Res.
 
 init([]) ->
