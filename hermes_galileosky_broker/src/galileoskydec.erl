@@ -38,6 +38,8 @@ init([]) ->
 %%%----------------------------------------------------------------------------
 handle_call(get_connection, _From, State) ->
     {reply, State#state.connection, State};
+handle_call({get_channel, DevUID}, _From, State) ->
+    {reply, handle_pusher_channel(DevUID, State#state.connection), State};
 handle_call(get_cfg_path, _From, State) ->
     {reply, cfg_path(), State};
 handle_call(_Msg, _From, State) ->
@@ -45,6 +47,9 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast({start_pusher, [DevUID, CfgData]}, State) ->
     start_pusher(DevUID, CfgData),
+    {noreply, State};
+handle_cast({stop_pusher, DevUID}, State) ->
+    stop_pusher(PuName),
     {noreply, State};
 handle_cast(restore_cfg, State) ->
     read_cfg_files(cfg_path()),
@@ -129,7 +134,7 @@ stop_pusher(PuName) ->
         {error, not_found} ->
             ok;
         _ ->
-            supervisor:terminate_child(galileosky_pusher_sup, PuName),
+            supervisor:terminate_child(galileosky_pusher_sup, PuName), % more mercy
             supervisor:delete_child(galileosky_pusher_sup, PuName)
     end.
 
@@ -175,6 +180,11 @@ intercourse() ->
     {ok, Channel} = amqp_connection:open_channel(Connection),
     erlang:link(Connection),
     #state{connection = Connection, channel = Channel}.
+
+handle_pusher_channel(DevUID, Connection) ->
+    {ok, Channel} = amqp_connection:open_channel(Connection),
+    % #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = DevUID}, PuPid),
+    Channel.
 
 ack_msg(Channel, DlvrTag) ->
     case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of
