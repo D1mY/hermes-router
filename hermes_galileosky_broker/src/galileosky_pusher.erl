@@ -1,5 +1,5 @@
 %%% Decode Galileosky packets to Erlang terms,
-%%% and pushing them to ebtq queue
+%%% and pushing them to RMQ exchange
 -module(galileosky_pusher).
 
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
@@ -13,34 +13,16 @@ start(Q) when erlang:is_bitstring(Q) ->
     {ok, erlang:spawn_link(?MODULE, init, [Q])};
 start(Any) ->
     rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [
-        erlang:process_info(self(), registered_name), Any
+        self(), Any
     ]).
 
 init(Q) ->
-    % bad practice?
-    process_flag(trap_exit, true),
-    PuName = erlang:binary_to_atom(<<"galileosky_pusher_", Q/binary>>),
-    erlang:register(PuName, self()),
+    % process_flag(trap_exit, true), % (?)
     CfgPath = gen_server:call(galileoskydec, get_cfg_path),
     Cfg = read_cfg_file(CfgPath, Q),
     self() ! {cfg, Cfg},
-    Connection = gen_server:call(galileoskydec, get_connection),
-    Channel = gen_server:call(galileoskydec, {get_channel, PuName}),
-    % Channel = intercourse(Q, Connection, amqp_connection:open_channel(Connection)),
-    % #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
-    % #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:call(Channel, #'basic.consume'{
-    %     queue = Q
-    % }),
+    Channel = gen_server:call(galileoskydec, {get_channel, Q}),
     loop(Channel, []),
-    % case erlang:is_process_alive(Channel) of
-    %     true ->
-    %         amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
-    %         rabbit_log:info("Hermes Galileosky pusher ~p channel close: ~p", [
-    %             Q, amqp_channel:close(Channel)
-    %         ]);
-    %     _ ->
-    %         ok
-    % end,
     ok.
 
 loop(Channel, CfgMap) ->
@@ -50,20 +32,17 @@ loop(Channel, CfgMap) ->
             Res = handle_content(Content, CfgMap),
             case publish_points(Channel, Res, DlvrTag) of
                 ok -> loop(Channel, CfgMap);
-                Any -> Any % TODO: handle this
+                % TODO: handle this
+                Any -> Any
             end;
         {cfg, Payload} ->
             CfgMap1 = maps:merge(maps:from_list(ets:tab2list(galskytags)), maps:from_list(Payload)),
             loop(Channel, CfgMap1);
-        % {'EXIT', _From, Reason} ->
-        %     {registered_name, PuName} = erlang:process_info(self(), registered_name),
-        %     rabbit_log:info("Hermes Galileosky pusher ~p stopped with reason ~p", [
-        %         PuName, Reason
-        %     ]),
-        %     gen_server:cast(galileoskydec, {stop_pusher, PuName});
-        #'basic.cancel_ok'{} ->
+        #'basic.consume_ok'{consumer_tag = ConsTag} ->
+            erlang:put(consumer_tag, ConsTag),
+            loop(Channel, CfgMap);
+        #'basic.cancel_ok'{consumer_tag = erlang:get(consumer_tag)} ->
             ok;
-            % erlang:exit();
         _ ->
             loop(Channel, CfgMap)
     end.
@@ -91,7 +70,7 @@ publish_points(Channel, Res, DlvrTag) ->
         ok ->
             ack_points(Channel, DlvrTag);
         blocked ->
-            timer:sleep(3000),
+            timer:sleep(1000),
             publish_points(Channel, Res, DlvrTag);
         closing ->
             closing
@@ -131,12 +110,6 @@ parse_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
 
 %%%-----------------------------------------------------------------------------
 %%% helpers
-intercourse(_, _, {ok, Channel}) ->
-    Channel;
-intercourse(Q, Connection, {error, _}) ->
-    timer:sleep(1000),
-    intercourse(Q, Connection, amqp_connection:open_channel(Connection)).
-
 read_cfg_file(error, _) ->
     [];
 read_cfg_file(Path, Q) ->

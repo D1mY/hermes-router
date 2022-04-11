@@ -26,7 +26,7 @@ start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    % process_flag(trap_exit, true), % bad practice?
+    % process_flag(trap_exit, true),
     case decmap:unfold() of
         true ->
             self() ! configure;
@@ -38,8 +38,8 @@ init([]) ->
 %%%----------------------------------------------------------------------------
 handle_call(get_connection, _From, State) ->
     {reply, State#state.connection, State};
-handle_call({get_channel, DevUID}, _From, State) ->
-    {reply, handle_pusher_channel(DevUID, State#state.connection), State};
+handle_call({get_channel, Q}, From, State) ->
+    {reply, handle_pusher_channel(From, Q, State#state.connection), State};
 handle_call(get_cfg_path, _From, State) ->
     {reply, cfg_path(), State};
 handle_call(_Msg, _From, State) ->
@@ -49,7 +49,7 @@ handle_cast({start_pusher, [DevUID, CfgData]}, State) ->
     start_pusher(DevUID, CfgData),
     {noreply, State};
 handle_cast({stop_pusher, DevUID}, State) ->
-    stop_pusher(PuName),
+    stop_pusher(DevUID),
     {noreply, State};
 handle_cast(restore_cfg, State) ->
     read_cfg_files(cfg_path()),
@@ -82,6 +82,7 @@ terminate(
         consumer_tag = ConsTag
     }
 ) ->
+    erlang:unlink(Connection),
     amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
     amqp_channel:close(Channel),
     amqp_connection:close(Connection),
@@ -99,7 +100,7 @@ handle_content(Content) ->
             gen_server:cast(galileoskydec, {start_pusher, [DevUID, CfgData]});
         [{<<"uid_rmv">>, _, DevUID}] ->
             handle_cfg_file(DevUID, <<"uid_rmv">>),
-            stop_pusher(erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>));
+            stop_pusher(DevUID);
         _ ->
             not_valid
     end.
@@ -119,28 +120,40 @@ start_pusher(DevUID, CfgData) ->
             }
         )
     of
-        {error, {already_started, _}} ->
-            PuName ! {cfg, CfgData};
+        {error, {already_started, PuPid}} ->
+            PuPid ! {cfg, CfgData};
         {error, already_present} ->
             supervisor:restart_child(galileosky_pusher_sup, PuName);
         {error, What} ->
-            rabbit_log:info("Hermes Galileosky broker: pusher for ~p start error ~p", [DevUID, What]);
+            rabbit_log:info("Hermes Galileosky broker: pusher for ~p start error: ~p", [
+                DevUID, What
+            ]);
         _ ->
             ok
     end.
 
-stop_pusher(PuName) ->
+% TODO (!)
+stop_pusher(DevUID) ->
+    % canceling sub
+    case erlang:erase(erlang:binary_to_atom(DevUID)) of
+        undefined ->
+            ok;
+        ConsTag ->
+            amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag})
+    end,
+    % delete sup child
+    PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
     case supervisor:get_childspec(galileosky_pusher_sup, PuName) of
         {error, not_found} ->
             ok;
         _ ->
-            supervisor:terminate_child(galileosky_pusher_sup, PuName), % more mercy
+            % no mercy if consumer still working
+            supervisor:terminate_child(galileosky_pusher_sup, PuName),
             supervisor:delete_child(galileosky_pusher_sup, PuName)
     end.
 
 %%%-----------------------------------------------------------------------------
 %%% helpers
-
 configure() ->
     case rabbit:is_running() of
         false ->
@@ -175,15 +188,27 @@ configure(State = #state{channel = Channel}) ->
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
-    % TODO: garbage previous Connection (stored in ETS 'connection_created' table)
+    % TODO: garbage previous Connection (stored in ETS 'connection_created' table) (?)
     {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
     {ok, Channel} = amqp_connection:open_channel(Connection),
+    % will terminate RMQ connection after die
     erlang:link(Connection),
     #state{connection = Connection, channel = Channel}.
 
-handle_pusher_channel(DevUID, Connection) ->
+handle_pusher_channel(PuPid, Q, Connection) ->
     {ok, Channel} = amqp_connection:open_channel(Connection),
-    % #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = DevUID}, PuPid),
+    #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
+    % OldConsTag = erlang:put(erlang:binary_to_atom(Q), ConsTag),
+    case erlang:get(erlang:binary_to_atom(Q)) of
+        undefined ->
+            ok;
+        OldConsTag ->
+            amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = OldConsTag})
+    end,
+    #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
+        Channel, #'basic.consume'{queue = Q}, PuPid
+    ),
+    erlang:put(erlang:binary_to_atom(Q), ConsTag),
     Channel.
 
 ack_msg(Channel, DlvrTag) ->
@@ -191,7 +216,7 @@ ack_msg(Channel, DlvrTag) ->
         ok ->
             ok;
         blocked ->
-            timer:sleep(3000),
+            timer:sleep(1000),
             ack_msg(Channel, DlvrTag);
         closing ->
             {ok, <<"Closing channel">>}
@@ -209,7 +234,7 @@ cfg_path() ->
             error
     end.
 
-%% find stored cfg files and start pushers
+%% find stored config files and start pushers
 read_cfg_files(error) ->
     ok;
 read_cfg_files(Path) ->
@@ -250,7 +275,7 @@ parse_cfg(Payload) ->
                 {ok, ExprLst} ->
                     erl_eval:exprs(ExprLst, []);
                 {error, ErrInf} ->
-                    rabbit_log:info("Hermes Galileosky broker: parse expressions error: ~p", [
+                    rabbit_log:info("Hermes Galileosky broker: parse cfg expressions error: ~p", [
                         ErrInf
                     ]),
                     {value, [], []}
