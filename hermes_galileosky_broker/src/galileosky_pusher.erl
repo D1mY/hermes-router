@@ -41,8 +41,13 @@ loop(Channel, CfgMap) ->
         #'basic.consume_ok'{consumer_tag = ConsTag} ->
             erlang:put(consumer_tag, ConsTag),
             loop(Channel, CfgMap);
-        #'basic.cancel_ok'{consumer_tag = erlang:get(consumer_tag)} ->
-            ok;
+        #'basic.cancel_ok'{consumer_tag = ConsTag} ->
+            case ConsTag == erlang:get(consumer_tag) of
+                true ->
+                    ok;
+                false ->
+                    loop(Channel, CfgMap)
+            end;
         _ ->
             loop(Channel, CfgMap)
     end.

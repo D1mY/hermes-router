@@ -23,15 +23,19 @@
 }).
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    % gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
     % process_flag(trap_exit, true),
     case decmap:unfold() of
         true ->
+            % State = configure(),
+
+            % delayed init
             self() ! configure;
         false ->
-            rabbit_log:info("Hermes Galileosky broker: decmap unfold error during init")
+            rabbit_log:info("Hermes Galileosky broker fatal: decmap unfold error during init")
     end,
     {ok, #state{}}.
 
@@ -39,7 +43,8 @@ init([]) ->
 handle_call(get_connection, _From, State) ->
     {reply, State#state.connection, State};
 handle_call({get_channel, Q}, From, State) ->
-    {reply, handle_pusher_channel(From, Q, State#state.connection), State};
+    {PuPid, _} = From,
+    {reply, handle_pusher_channel(PuPid, Q, State#state.connection), State};
 handle_call(get_cfg_path, _From, State) ->
     {reply, cfg_path(), State};
 handle_call(_Msg, _From, State) ->
@@ -64,8 +69,13 @@ handle_info(
     handle_content(Content),
     ack_msg(Channel, DlvrTag),
     {noreply, State};
-handle_info(#'basic.cancel_ok'{}, State) ->
-    {stop, normal, State};
+handle_info(#'basic.cancel_ok'{consumer_tag = ConsTag}, State) ->
+    case ConsTag == State#state.consumer_tag of
+        true ->
+            {stop, normal, State};
+        false ->
+            {noreply, State}
+    end;
 handle_info(configure, _State) ->
     State = configure(),
     {noreply, State};
@@ -138,7 +148,7 @@ stop_pusher(DevUID) ->
     case erlang:erase(erlang:binary_to_atom(DevUID)) of
         undefined ->
             ok;
-        ConsTag ->
+        {ConsTag, Channel} ->
             amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag})
     end,
     % delete sup child
@@ -185,6 +195,8 @@ configure(State = #state{channel = Channel}) ->
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:call(
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}
     ),
+    erlang:register(?MODULE, self()),
+    rabbit_log:info("Hermes Galileosky broker started: ~p ~p",[State, ConsTag]),
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
@@ -196,20 +208,26 @@ intercourse() ->
     #state{connection = Connection, channel = Channel}.
 
 handle_pusher_channel(PuPid, Q, Connection) ->
-    {ok, Channel} = amqp_connection:open_channel(Connection),
-    #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable = true}),
-    % OldConsTag = erlang:put(erlang:binary_to_atom(Q), ConsTag),
+    % PuChannel =
     case erlang:get(erlang:binary_to_atom(Q)) of
         undefined ->
+            % {ok, Channel} = amqp_connection:open_channel(Connection),
+            % Channel;
             ok;
-        OldConsTag ->
+        {OldConsTag, Channel} ->
+            %,
             amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = OldConsTag})
+        % Channel
     end,
+    {ok, PuChannel} = amqp_connection:open_channel(Connection),
+    #'queue.declare_ok'{} = amqp_channel:call(PuChannel, #'queue.declare'{
+        queue = Q, durable = true
+    }),
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
-        Channel, #'basic.consume'{queue = Q}, PuPid
+        PuChannel, #'basic.consume'{queue = Q}, PuPid
     ),
-    erlang:put(erlang:binary_to_atom(Q), ConsTag),
-    Channel.
+    erlang:put(erlang:binary_to_atom(Q), {ConsTag, PuChannel}),
+    PuChannel.
 
 ack_msg(Channel, DlvrTag) ->
     case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of

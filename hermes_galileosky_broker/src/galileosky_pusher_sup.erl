@@ -14,7 +14,7 @@
 start_link() ->
     Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
     sys:trace(galileosky_pusher_sup, ?DEBUGMODE),
-    gen_server:cast(galileoskydec, restore_cfg),
+    erlang:spawn_link(fun() -> start_workers() end),
     Res.
 
 init([]) ->
@@ -22,3 +22,12 @@ init([]) ->
             intensity => 3,
             period => 10},
             []}}.
+
+start_workers() ->
+case erlang:whereis(galileoskydec) of
+    undefined ->
+        timer:sleep(1000),
+        start_workers();
+    Pid ->
+        gen_server:cast(Pid, restore_cfg)
+    end.

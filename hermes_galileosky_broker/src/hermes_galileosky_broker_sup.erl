@@ -13,7 +13,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, {#{strategy => one_for_all,
+    {ok, {#{strategy => rest_for_one,
             intensity => 3,
             period => 10},
             [#{id => galileoskydec,
