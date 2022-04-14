@@ -30,8 +30,6 @@ init([]) ->
     % process_flag(trap_exit, true),
     case decmap:unfold() of
         true ->
-            % State = configure(),
-
             % delayed init
             self() ! configure;
         false ->
@@ -57,7 +55,7 @@ handle_cast({stop_pusher, DevUID}, State) ->
     stop_pusher(DevUID),
     {noreply, State};
 handle_cast(restore_cfg, State) ->
-    read_cfg_files(cfg_path()),
+    fold_cfg_files(cfg_path()),
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -142,14 +140,14 @@ start_pusher(DevUID, CfgData) ->
             ok
     end.
 
-% TODO (!)
 stop_pusher(DevUID) ->
     % canceling sub
     case erlang:erase(erlang:binary_to_atom(DevUID)) of
         undefined ->
             ok;
         {ConsTag, Channel} ->
-            amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag})
+            amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
+            amqp_channel:close(Channel)
     end,
     % delete sup child
     PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
@@ -196,7 +194,7 @@ configure(State = #state{channel = Channel}) ->
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}
     ),
     erlang:register(?MODULE, self()),
-    rabbit_log:info("Hermes Galileosky broker started: ~p ~p",[State, ConsTag]),
+    rabbit_log:info("Hermes Galileosky broker started",[]),
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
@@ -208,16 +206,11 @@ intercourse() ->
     #state{connection = Connection, channel = Channel}.
 
 handle_pusher_channel(PuPid, Q, Connection) ->
-    % PuChannel =
     case erlang:get(erlang:binary_to_atom(Q)) of
         undefined ->
-            % {ok, Channel} = amqp_connection:open_channel(Connection),
-            % Channel;
             ok;
-        {OldConsTag, Channel} ->
-            %,
-            amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = OldConsTag})
-        % Channel
+        {_OldConsTag, Channel} ->
+            amqp_channel:close(Channel)
     end,
     {ok, PuChannel} = amqp_connection:open_channel(Connection),
     #'queue.declare_ok'{} = amqp_channel:call(PuChannel, #'queue.declare'{
@@ -231,13 +224,11 @@ handle_pusher_channel(PuPid, Q, Connection) ->
 
 ack_msg(Channel, DlvrTag) ->
     case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of
-        ok ->
-            ok;
         blocked ->
             timer:sleep(1000),
             ack_msg(Channel, DlvrTag);
-        closing ->
-            {ok, <<"Closing channel">>}
+        _ ->
+            ok
     end.
 
 cfg_path() ->
@@ -253,9 +244,9 @@ cfg_path() ->
     end.
 
 %% find stored config files and start pushers
-read_cfg_files(error) ->
+fold_cfg_files(error) ->
     ok;
-read_cfg_files(Path) ->
+fold_cfg_files(Path) ->
     filelib:fold_files(
         Path,
         "^hermes_galileosky_",

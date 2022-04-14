@@ -132,11 +132,9 @@ read_cfg_file(Path, Q) ->
 
 ack_points(Channel, DlvrTag) ->
     case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of
-        ok ->
-            ok;
         blocked ->
-            timer:sleep(3000),
+            timer:sleep(1000),
             ack_points(Channel, DlvrTag);
-        closing ->
-            closing
+        _ ->
+            ok
     end.
