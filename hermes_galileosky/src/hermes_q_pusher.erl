@@ -62,6 +62,6 @@ q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) -> %% пихатель 
 
 close_all(AMQPChannel, AMQPConnection) ->
   rabbit_log:info("qpusher ended: AMQP channel ~p closing~n", [AMQPChannel]),
-  ok = amqp_channel:unregister_flow_handler(AMQPChannel),
-  ok = amqp_channel:close(AMQPChannel),
-  ok = amqp_connection:close(AMQPConnection).
+  amqp_channel:unregister_flow_handler(AMQPChannel),
+  amqp_channel:close(AMQPChannel),
+  amqp_connection:close(AMQPConnection).
