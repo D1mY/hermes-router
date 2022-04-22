@@ -40,7 +40,7 @@ packet_manager(Socket, TimeOut) ->
         _ ->
             packet_manager(Socket, TimeOut)
     end,
-    gen_tcp:close(Socket).
+    stop(Socket).
 
 handle_error({error, closed}, _, _, _) ->
     ok;
@@ -49,5 +49,9 @@ handle_error({error, timeout}, Socket, CallersPid, TimeOut) ->
     %% рекурсия для проверки сообщений из "почтового ящика"
     packet_manager(Socket, TimeOut);
 handle_error(Error, Socket, _, _) ->
-    gen_tcp:close(Socket),
-    rabbit_log:info("socket ~p recv: ~p~n", [Socket, Error]).
+    stop(Socket),
+    rabbit_log:info("Socket ~p recv: ~p~n", [Socket, Error]).
+
+stop(Socket) ->
+    gen_tcp:close(Socket).
+    % gen_server:cast(hermes_worker, {close_socket, Socket}).

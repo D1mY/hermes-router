@@ -24,7 +24,7 @@ q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) -> %% пихатель 
                     PMPid ! {get, self()},
                     q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel);
                 blocked ->
-                    timer:sleep(3000),
+                    timer:sleep(1000),
                     PMPid ! {get, self()},
                     q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel);
                 closing ->
@@ -45,7 +45,7 @@ q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) -> %% пихатель 
                     end,
                     q_pusher(DevUID, NewPMPid, AMQPConnection, AMQPChannel);
                 blocked ->
-                    timer:sleep(3000),
+                    timer:sleep(1000),
                     self() ! {new_socket, NewPMPid, BinData},
                     q_pusher(DevUID, CurrPMPid,AMQPConnection, AMQPChannel);
                 closing ->

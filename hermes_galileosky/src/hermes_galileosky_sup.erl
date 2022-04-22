@@ -27,5 +27,11 @@ init([]) ->
                 restart => permanent,
                 shutdown => 10000,
                 type => supervisor,
-                modules => [hermes_accept_sup]}
+                modules => [hermes_accept_sup]},
+            #{id => galileo_pacman_sup,
+                start => {galileo_pacman_sup, start_link, []},
+                restart => permanent,
+                shutdown => 10000,
+                type => supervisor,
+                modules => [galileo_pacman_sup]}
             ]}}.

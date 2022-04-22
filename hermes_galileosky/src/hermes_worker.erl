@@ -26,11 +26,17 @@ init([]) ->
     {ok, State}.
 
 %----------------------------------------------
+handle_call({handle_socket, Dev_UID, PMPid, BinData}, _From, State) ->
+    handle_socket(Dev_UID, PMPid, BinData),
+    {noreply, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
 handle_cast(start_acceptors, State) ->
     [supervisor:start_child(hermes_accept_sup, [Id, State]) || Id <- lists:seq(0, ?PROCNUM)],
+    {noreply, State};
+handle_cast({close_socket, Socket}, State) ->
+    gen_tcp:close(Socket),
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -61,6 +67,7 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
     {ok, PMPid} = supervisor:start_child(galileo_pacman_sup, [Socket, 61000]),
     %% -----------
     % PMPid = erlang:spawn(galileo_pacman, packet_manager, [Socket, 61000]),
+    % case gen_tcp:controlling_process(Socket, erlang:whereis(hermes_worker)) of
     case gen_tcp:controlling_process(Socket, PMPid) of
         ok ->
             PMPid ! {get, self()}, %% у родившегося pacman-а запрашиваем пакет от девайса
@@ -71,15 +78,15 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
                             PMPid ! {abort, ok}; %% яваснезвалидитенайух
                         Dev_UID -> %% UID девайса детектед
                             gen_tcp:send(Socket, [<<2>>, Crc]), %% отправляем ответный CRC
-                            handle_socket(Dev_UID, PMPid, BinData), %% приступаем к водным процедурам
+                            gen_server:call(hermes_worker ,{handle_socket, Dev_UID, PMPid, BinData}), %% приступаем к водным процедурам
+                            % handle_socket(Dev_UID, PMPid, BinData), %% приступаем к водным процедурам
                             rabbit_log:info("Hermes Galileosky server: acceptor #~p: client ~p, device UID=~p, pacman PID=~p, socket ~p", [Id, inet:peername(Socket), Dev_UID, PMPid, Socket]) %% чокаво
                     end;
                 Any ->
                     rabbit_log:info("Hermes Galileosky server: acceptor #~p get ~p",[Id,Any])
             after 60000 ->
                 rabbit_log:info("Hermes Galileosky server: acceptor #~p timeout: client ~p, pacman PID=~p, socket ~p~n", [Id, inet:peername(Socket), PMPid, Socket]), %% чокаво
-                PMPid ! {abort, ok},
-                gen_tcp:close(Socket)
+                PMPid ! {abort, ok}
             end;
         {error, _} ->
             gen_tcp:close(Socket)
