@@ -12,7 +12,6 @@
         ]).
 -export([
         server/1,
-        % start_acceptor/2,
         accept/2
         ]).
 
@@ -26,17 +25,22 @@ init([]) ->
     {ok, State}.
 
 %----------------------------------------------
-handle_call({handle_socket, Dev_UID, PMPid, BinData}, _From, State) ->
-    handle_socket(Dev_UID, PMPid, BinData),
+handle_call({handle_socket, DevUID, PMPid, BinData}, _From, State) ->
+    handle_socket(DevUID, PMPid, BinData),
+    erlang:put(erlang:binary_to_atom(DevUID, latin1), PMPid),
     {noreply, State};
+% handle_call({start_pacman, Socket}, _From, State) ->
+%     {ok, PMPid} = supervisor:start_child(galileo_pacman_sup, [Socket, 61000]),
+%     {reply, PMPid, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
 handle_cast(start_acceptors, State) ->
     [supervisor:start_child(hermes_accept_sup, [Id, State]) || Id <- lists:seq(0, ?PROCNUM)],
     {noreply, State};
-handle_cast({close_socket, Socket}, State) ->
-    gen_tcp:close(Socket),
+handle_cast(start_qpushers, State) ->
+    QPuList = erlang:get(),
+    [supervisor:start_child(hermes_q_pusher_sup, [DevUID, PMPid]) || {DevUID, PMPid} <- QPuList],
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -64,6 +68,7 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
     %% -----------
     rabbit_log:info("Hermes Galileosky server: acceptor #~p: client connected on socket ~p", [Id, Socket]), %% чокаво
     %% TODO: guard
+    % PMPid = gen_server:call(hermes_worker, {start_pacman, Socket}),
     {ok, PMPid} = supervisor:start_child(galileo_pacman_sup, [Socket, 61000]),
     %% -----------
     % PMPid = erlang:spawn(galileo_pacman, packet_manager, [Socket, 61000]),
@@ -76,11 +81,11 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
                     case packet_getid(BinData) of
                         ok -> %% UID девайса нот детектед
                             PMPid ! {abort, ok}; %% яваснезвалидитенайух
-                        Dev_UID -> %% UID девайса детектед
+                        DevUID -> %% UID девайса детектед
                             gen_tcp:send(Socket, [<<2>>, Crc]), %% отправляем ответный CRC
-                            gen_server:call(hermes_worker ,{handle_socket, Dev_UID, PMPid, BinData}), %% приступаем к водным процедурам
-                            % handle_socket(Dev_UID, PMPid, BinData), %% приступаем к водным процедурам
-                            rabbit_log:info("Hermes Galileosky server: acceptor #~p: client ~p, device UID=~p, pacman PID=~p, socket ~p", [Id, inet:peername(Socket), Dev_UID, PMPid, Socket]) %% чокаво
+                            gen_server:call(hermes_worker, {handle_socket, DevUID, PMPid, BinData}), %% приступаем к водным процедурам
+                            % handle_socket(DevUID, PMPid, BinData), %% приступаем к водным процедурам
+                            rabbit_log:info("Hermes Galileosky server: acceptor #~p: client ~p, device UID=~p, pacman PID=~p, socket ~p", [Id, inet:peername(Socket), DevUID, PMPid, Socket]) %% чокаво
                     end;
                 Any ->
                     rabbit_log:info("Hermes Galileosky server: acceptor #~p get ~p",[Id,Any])
@@ -93,14 +98,14 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
     end,
   accept(Id, ListenSocket).
 
-handle_socket(Dev_UID, PMPid, BinData) -> %% ищем запущенный или рожаем новый обработчик данных от девайса.
-    case erlang:whereis(erlang:binary_to_atom(Dev_UID, latin1)) of
+handle_socket(DevUID, PMPid, BinData) -> %% ищем запущенный или рожаем новый обработчик данных от девайса.
+    case erlang:whereis(erlang:binary_to_atom(DevUID, latin1)) of
         undefined -> %% новый девайс
-            erlang:spawn(hermes_q_pusher,q_pusher_init,[Dev_UID, PMPid]) ! {new_socket, PMPid, BinData},
-            rabbit_log:info("Hermes Galileosky server: new qpusher for uid=~p pacman pid=~p", [Dev_UID, PMPid]); %% чокаво;
+            erlang:spawn(hermes_q_pusher,q_pusher_init,[DevUID, PMPid]) ! {new_socket, PMPid, BinData},
+            rabbit_log:info("Hermes Galileosky server: new qpusher for uid=~p pacman pid=~p", [DevUID, PMPid]); %% чокаво;
         QPPid -> %% девайс переподключился на новый сокет
             QPPid ! {new_socket, PMPid, BinData},
-            rabbit_log:info("Hermes Galileosky server: found qpusher ~p: new pacman pid=~p for uid=~p", [QPPid, PMPid, Dev_UID]) %% чокаво
+            rabbit_log:info("Hermes Galileosky server: found qpusher ~p: new pacman pid=~p for uid=~p", [QPPid, PMPid, DevUID]) %% чокаво
     end.
 
 packet_getid(<<>>) ->
@@ -112,6 +117,6 @@ packet_getid(BinData) when erlang:is_binary(BinData) ->
             <<_:1/binary, Est/binary>> = REst,
             packet_getid(Est);
         true ->
-            <<Dev_UID:120/bits, _/bits>> = REst,
-            Dev_UID
+            <<DevUID:120/bits, _/bits>> = REst,
+            DevUID
     end.
