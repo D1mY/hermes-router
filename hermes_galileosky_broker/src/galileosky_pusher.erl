@@ -17,7 +17,6 @@ start(Any) ->
     ]).
 
 init(Q) ->
-    % process_flag(trap_exit, true), % (?)
     CfgPath = gen_server:call(galileoskydec, get_cfg_path),
     Cfg = read_cfg_file(CfgPath, Q),
     self() ! {cfg, Cfg},
@@ -28,11 +27,11 @@ init(Q) ->
 loop(Channel, CfgMap) ->
     receive
         {#'basic.deliver'{delivery_tag = DlvrTag}, Content} ->
-            % IMEI ("uid") should be in header
+            %% IMEI ("uid") should be in header
             Res = handle_content(Content, CfgMap),
             case publish_points(Channel, Res, DlvrTag) of
                 ok -> loop(Channel, CfgMap);
-                % TODO: handle this
+                %% TODO: handle this
                 Any -> Any
             end;
         {cfg, Payload} ->
@@ -81,16 +80,16 @@ publish_points(Channel, Res, DlvrTag) ->
             closing
     end.
 
-% message of 1 point
+%% message of 1 point
 parse_data(_, <<>>, _, DevUID, Acc, []) ->
     [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])}];
-% message of many points
+%% message of many points
 parse_data(_, <<>>, _, DevUID, Acc, TArr) ->
     [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])} | TArr];
 parse_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
     <<Tag:8, Tail/binary>> = Payload,
     case Tag >= PrevTag of
-        % accumulate new line of terms
+        %% accumulate new line of terms
         true ->
             case maps:get(Tag, CfgMap, not_found) of
                 {Len, ExtractFun} ->
@@ -106,7 +105,7 @@ parse_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
                         TArr
                     )
             end;
-        % lot of points in message
+        %% lot of points in message
         false ->
             parse_data(CfgMap, Payload, 0, DevUID, [], [
                 {lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])} | TArr

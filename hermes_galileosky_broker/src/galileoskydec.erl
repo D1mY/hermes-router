@@ -30,7 +30,7 @@ init([]) ->
     % process_flag(trap_exit, true),
     case decmap:unfold() of
         true ->
-            % delayed init
+            %% delayed init
             self() ! configure;
         false ->
             rabbit_log:info("Hermes Galileosky broker fatal: decmap unfold error during init")
@@ -141,7 +141,7 @@ start_pusher(DevUID, CfgData) ->
     end.
 
 stop_pusher(DevUID) ->
-    % canceling sub
+    %% canceling sub
     case erlang:erase(erlang:binary_to_atom(DevUID)) of
         undefined ->
             ok;
@@ -149,13 +149,13 @@ stop_pusher(DevUID) ->
             amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
             amqp_channel:close(Channel)
     end,
-    % delete sup child
+    %% delete sup child
     PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
     case supervisor:get_childspec(galileosky_pusher_sup, PuName) of
         {error, not_found} ->
             ok;
         _ ->
-            % no mercy if consumer still working
+            %% no mercy if consumer still working
             supervisor:terminate_child(galileosky_pusher_sup, PuName),
             supervisor:delete_child(galileosky_pusher_sup, PuName)
     end.
@@ -198,10 +198,10 @@ configure(State = #state{channel = Channel}) ->
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
-    % TODO: garbage previous Connection (stored in ETS 'connection_created' table) (?)
+    %% TODO: garbage previous Connection (stored in ETS 'connection_created' table) (?)
     {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
     {ok, Channel} = amqp_connection:open_channel(Connection),
-    % will terminate RMQ connection after die
+    %% will terminate RMQ connection after die
     erlang:link(Connection),
     #state{connection = Connection, channel = Channel}.
 
@@ -266,10 +266,10 @@ handle_cfg_file(DevUID, CfgData) ->
     File = cfg_path() ++ "/hermes_galileosky_" ++ erlang:binary_to_list(DevUID),
     case CfgData of
         <<"uid_rmv">> ->
-            % TODO: response result
+            %% TODO: response result
             file:delete(File);
         _ ->
-            % TODO: response result
+            %% TODO: response result
             file:write_file(File, erlang:term_to_binary(CfgData))
     end.
 

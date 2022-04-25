@@ -1,4 +1,7 @@
 -module(hermes_worker).
+
+-include_lib("../deps/amqp_client/include/amqp_client.hrl").
+
 -behaviour(gen_server).
 
 -export([start_link/0]).
@@ -24,23 +27,41 @@ init([]) ->
     State = server(application:get_env(hermes_galileosky, tcp_port, 60521)), %% запускаем сервер при старте плагина на порту из конфига (или дефолт: 60521)
     {ok, State}.
 
-%----------------------------------------------
-handle_call({handle_socket, DevUID, PMPid, BinData}, _From, State) ->
-    handle_socket(DevUID, PMPid, BinData),
-    erlang:put(erlang:binary_to_atom(DevUID, latin1), PMPid),
-    {noreply, State};
-% handle_call({start_pacman, Socket}, _From, State) ->
-%     {ok, PMPid} = supervisor:start_child(galileo_pacman_sup, [Socket, 61000]),
-%     {reply, PMPid, State};
+%%%----------------------------------------------------------------------------
+handle_call({handle_qpusher, DevUID, Action}, From, State) ->
+    {QPPid, _} = From,
+    Reply = case Action of
+        put ->
+            QPPid = supervisor:start_child(hermes_q_pusher_sup, [DevUID]),
+            erlang:put(erlang:binary_to_atom(DevUID, latin1), QPPid),
+            QPPid;
+        get ->
+            erlang:get(erlang:binary_to_atom(DevUID, latin1));
+        erase ->
+            erlang:erase(erlang:binary_to_atom(DevUID, latin1))
+        end,
+    {reply, Reply, State};
+handle_call({start_qpusher, DevUID}, _From, State) ->
+    QPPid = supervisor:start_child(hermes_q_pusher_sup, [DevUID]),
+    erlang:put(erlang:binary_to_atom(DevUID, latin1), QPPid),
+    {reply, QPPid, State};
+handle_call({find_qpusher, DevUID}, _From, State) ->
+    QPPid = erlang:get(erlang:binary_to_atom(DevUID, latin1)),
+    {reply, QPPid, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
+handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
+    % erlang:put(erlang:binary_to_atom(DevUID, latin1), ),
+    handle_socket(DevUID, PMPid, BinData),
+    {noreply, State};
 handle_cast(start_acceptors, State) ->
-    [supervisor:start_child(hermes_accept_sup, [Id, State]) || Id <- lists:seq(0, ?PROCNUM)],
+    {ListenSocket, _} = State,
+    [supervisor:start_child(hermes_accept_sup, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
     {noreply, State};
 handle_cast(start_qpushers, State) ->
-    QPuList = erlang:get(),
-    [supervisor:start_child(hermes_q_pusher_sup, [DevUID, PMPid]) || {DevUID, PMPid} <- QPuList],
+    % QPuList = erlang:get(),
+    % [supervisor:start_child(hermes_q_pusher_sup, [DevUID, PMPid]) || {DevUID, PMPid} <- QPuList],
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -48,19 +69,24 @@ handle_cast(_, State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_, {?MODULE, Port}) ->
-    gen_tcp:close(Port),
+terminate(_, {ListenSocket, AMQPConnection}) ->
+    gen_tcp:close(ListenSocket),
+    amqp_connection:close(AMQPConnection),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-%----------------------------------------------
-%% запускаем сервер
+%%%----------------------------------------------------------------------------
+%% server
 server(Port) ->
+    %% TODO: guard
     {ok, ListenSocket} = gen_tcp:listen(Port, [binary,{active,false},{reuseaddr,true},{exit_on_close,true},{keepalive,false},{nodelay,true},{backlog,128}]),
+    {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, hermes_galileosky_server),
+    %% -----------
     rabbit_log:info("Started Hermes Galileosky server at port ~p", [Port]), %% чокаво
-    ListenSocket.
-
+    {ListenSocket, AMQPConnection}.
+%%%----------------------------------------------------------------------------
+%%% acceptor implementation
 accept(Id, ListenSocket) -> %% прием TCP соединения от устройства
     rabbit_log:info("Hermes Galileosky server: acceptor #~p wait for client", [Id]), %% чокаво
     %% TODO: guard
@@ -68,11 +94,9 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
     %% -----------
     rabbit_log:info("Hermes Galileosky server: acceptor #~p: client connected on socket ~p", [Id, Socket]), %% чокаво
     %% TODO: guard
-    % PMPid = gen_server:call(hermes_worker, {start_pacman, Socket}),
     {ok, PMPid} = supervisor:start_child(galileo_pacman_sup, [Socket, 61000]),
     %% -----------
     % PMPid = erlang:spawn(galileo_pacman, packet_manager, [Socket, 61000]),
-    % case gen_tcp:controlling_process(Socket, erlang:whereis(hermes_worker)) of
     case gen_tcp:controlling_process(Socket, PMPid) of
         ok ->
             PMPid ! {get, self()}, %% у родившегося pacman-а запрашиваем пакет от девайса
@@ -83,7 +107,7 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
                             PMPid ! {abort, ok}; %% яваснезвалидитенайух
                         DevUID -> %% UID девайса детектед
                             gen_tcp:send(Socket, [<<2>>, Crc]), %% отправляем ответный CRC
-                            gen_server:call(hermes_worker, {handle_socket, DevUID, PMPid, BinData}), %% приступаем к водным процедурам
+                            gen_server:cast(hermes_worker, {handle_socket, DevUID, PMPid, BinData}), %% приступаем к водным процедурам
                             % handle_socket(DevUID, PMPid, BinData), %% приступаем к водным процедурам
                             rabbit_log:info("Hermes Galileosky server: acceptor #~p: client ~p, device UID=~p, pacman PID=~p, socket ~p", [Id, inet:peername(Socket), DevUID, PMPid, Socket]) %% чокаво
                     end;
@@ -98,15 +122,21 @@ accept(Id, ListenSocket) -> %% прием TCP соединения от устр
     end,
   accept(Id, ListenSocket).
 
+%%%----------------------------------------------------------------------------
+%%% Private helpers
 handle_socket(DevUID, PMPid, BinData) -> %% ищем запущенный или рожаем новый обработчик данных от девайса.
-    case erlang:whereis(erlang:binary_to_atom(DevUID, latin1)) of
+    % case erlang:whereis(erlang:binary_to_atom(DevUID, latin1)) of
+    % case erlang:get(erlang:binary_to_atom(DevUID, latin1)) of
+    QPPid = case gen_server:call(hermes_worker, {find_qpusher, DevUID}) of
         undefined -> %% новый девайс
-            erlang:spawn(hermes_q_pusher,q_pusher_init,[DevUID, PMPid]) ! {new_socket, PMPid, BinData},
-            rabbit_log:info("Hermes Galileosky server: new qpusher for uid=~p pacman pid=~p", [DevUID, PMPid]); %% чокаво;
-        QPPid -> %% девайс переподключился на новый сокет
-            QPPid ! {new_socket, PMPid, BinData},
-            rabbit_log:info("Hermes Galileosky server: found qpusher ~p: new pacman pid=~p for uid=~p", [QPPid, PMPid, DevUID]) %% чокаво
-    end.
+            Res = gen_server:call(hermes_worker, {start_qpusher, DevUID}),
+            rabbit_log:info("Hermes Galileosky server: new qpusher for uid=~p pacman pid=~p", [DevUID, PMPid]), %% чокаво;
+            Res;
+        Res -> %% девайс переподключился на новый сокет
+            rabbit_log:info("Hermes Galileosky server: found qpusher new pacman pid=~p for uid=~p", [PMPid, DevUID]), %% чокаво
+            Res
+    end,
+    QPPid ! {new_socket, PMPid, BinData}.
 
 packet_getid(<<>>) ->
     ok; %% no IMEI tag found
