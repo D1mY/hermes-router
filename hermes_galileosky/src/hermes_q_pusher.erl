@@ -3,8 +3,8 @@
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
 
 -export([
-    start_link/2,
-    q_pusher_init/2
+    start_link/1,
+    q_pusher_init/1
 ]).
 
 start_link(DevUID) ->
@@ -12,13 +12,13 @@ start_link(DevUID) ->
 
 %% инит пихателя в очередь
 q_pusher_init(DevUID) ->
-    [PMPid, AMQPConnection] = gen_server:call(hermes_worker, {handle_qpusher, DevUID, put}),
+    [PMPid, AMQPConnection] = gen_server:call(hermes_worker, {init_qpusher, DevUID}),
     % {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, DevUID),
-    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection), %,arguments=[{<<"x-queue-mode">>,longstr,<<"lazy">>}]}), %% maybe needed "lazy queues" 4 low RAM hardware
+    %,arguments=[{<<"x-queue-mode">>,longstr,<<"lazy">>}]}), %% maybe needed "lazy queues" 4 low RAM hardware
+    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
     #'queue.declare_ok'{} = amqp_channel:call(AMQPChannel, #'queue.declare'{
         queue = DevUID, durable = true
     }),
-    % erlang:register(erlang:binary_to_atom(DevUID, latin1),self()),
     amqp_channel:register_flow_handler(AMQPChannel, self()),
     q_pusher(DevUID, PMPid, AMQPConnection, AMQPChannel).
 
