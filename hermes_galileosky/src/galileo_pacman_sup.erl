@@ -10,6 +10,8 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init(_Args) ->
+    %% init ETS table for pm states: {DevUID, PMPid}
+    gen_server:call(hermes_worker, init_ets_table),
     SupervisorSpecification = #{
         strategy => simple_one_for_one,
         intensity => 10,

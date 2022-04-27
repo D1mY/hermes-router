@@ -42,8 +42,8 @@ packet_manager(Socket, TimeOut) ->
     end,
     stop(Socket).
 
-handle_error({error, closed}, _, _, _) ->
-    ok;
+% handle_error({error, closed}, Socket, _, _) ->
+%     stop(Socket);
 handle_error({error, timeout}, Socket, CallersPid, TimeOut) ->
     self() ! {get, CallersPid},
     %% рекурсия для проверки сообщений из "почтового ящика"
@@ -54,4 +54,3 @@ handle_error(Error, Socket, _, _) ->
 
 stop(Socket) ->
     gen_tcp:close(Socket).
-    % gen_server:cast(hermes_worker, {close_socket, Socket}).

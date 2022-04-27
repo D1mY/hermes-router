@@ -12,34 +12,24 @@ start_link(DevUID) ->
 
 %% инит пихателя в очередь
 q_pusher_init(DevUID) ->
-    [PMPid, AMQPConnection] = gen_server:call(hermes_worker, {init_qpusher, DevUID}),
-    % {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, DevUID),
+    {PMPid, AMQPConnection} = gen_server:call(hermes_worker, {init_qpusher, DevUID}),
+    q_pusher_init(DevUID, PMPid, AMQPConnection).
+q_pusher_init(_, undefined, _) ->
+    ok;
+q_pusher_init(DevUID, PMPid, AMQPConnection) ->
     %,arguments=[{<<"x-queue-mode">>,longstr,<<"lazy">>}]}), %% maybe needed "lazy queues" 4 low RAM hardware
     {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
     #'queue.declare_ok'{} = amqp_channel:call(AMQPChannel, #'queue.declare'{
         queue = DevUID, durable = true
     }),
-    amqp_channel:register_flow_handler(AMQPChannel, self()),
+    % amqp_channel:register_flow_handler(AMQPChannel, self()),
     q_pusher(DevUID, PMPid, AMQPConnection, AMQPChannel).
 
 %% пихатель в очередь (свою для каждого устройства), единственный для каждого устройства.
 q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) ->
     receive
         {p_m, PMPid, Socket, Crc, BinData} ->
-            case
-                amqp_channel:call(
-                    AMQPChannel,
-                    #'basic.publish'{routing_key = DevUID},
-                    #amqp_msg{
-                        props = #'P_basic'{
-                            delivery_mode = 2,
-                            headers = [{<<"uid">>, longstr, DevUID}],
-                            content_encoding = <<"base64">>
-                        },
-                        payload = [BinData]
-                    }
-                )
-            of
+            case q_push(AMQPChannel, DevUID, BinData) of
                 ok ->
                     gen_tcp:send(Socket, [<<2>>, Crc]),
                     PMPid ! {get, self()},
@@ -52,20 +42,7 @@ q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) ->
                     close_all(DevUID, AMQPChannel)
             end;
         {new_socket, NewPMPid, BinData} ->
-            case
-                amqp_channel:call(
-                    AMQPChannel,
-                    #'basic.publish'{routing_key = DevUID},
-                    #amqp_msg{
-                        props = #'P_basic'{
-                            delivery_mode = 2,
-                            headers = [{<<"uid">>, longstr, DevUID}],
-                            content_encoding = <<"base64">>
-                        },
-                        payload = [BinData]
-                    }
-                )
-            of
+            case q_push(AMQPChannel, DevUID, BinData) of
                 ok ->
                     NewPMPid ! {get, self()},
                     case CurrPMPid == NewPMPid of
@@ -82,16 +59,29 @@ q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) ->
                 closing ->
                     close_all(DevUID, AMQPChannel)
             end;
-        _Any ->
-            rabbit_log:info("Recieved: ~p~n", [_Any]),
+        Any ->
+            rabbit_log:info("qpusher ~p recieved: ~p~n", [DevUID, Any]),
             q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel)
     after 666000 ->
-        CurrPMPid ! {abort, ok},
         close_all(DevUID, AMQPChannel)
     end.
 
+q_push(AMQPChannel, DevUID, BinData) ->
+    amqp_channel:call(
+        AMQPChannel,
+        #'basic.publish'{routing_key = DevUID},
+        #amqp_msg{
+            props = #'P_basic'{
+                delivery_mode = 2,
+                headers = [{<<"uid">>, longstr, DevUID}],
+                content_encoding = <<"base64">>
+            },
+            payload = [BinData]
+        }
+    ).
+
 close_all(DevUID, AMQPChannel) ->
-    gen_server:call(hermes_worker, {handle_qpusher, DevUID, erase}),
+    gen_server:call(hermes_worker, {stop_qpusher, DevUID}),
     rabbit_log:info("qpusher ended: AMQP channel ~p closing~n", [AMQPChannel]),
-    amqp_channel:unregister_flow_handler(AMQPChannel),
+    % amqp_channel:unregister_flow_handler(AMQPChannel),
     amqp_channel:close(AMQPChannel).
