@@ -10,8 +10,7 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init(_Args) ->
-    %% init ETS table for pm states: {DevUID, PMPid}
-    gen_server:call(hermes_worker, init_ets_table),
+    erlang:spawn_link(fun() -> init_ets() end),
     SupervisorSpecification = #{
         strategy => simple_one_for_one,
         intensity => 10,
@@ -29,3 +28,14 @@ init(_Args) ->
     ],
 
     {ok, {SupervisorSpecification, ChildSpecifications}}.
+
+%% TODO: переделать инит ETS при запуске
+init_ets() ->
+    case erlang:whereis(hermes_worker) of
+    undefined ->
+        timer:sleep(100),
+        init_ets();
+    Pid ->
+        %% init ETS table for pm states: {DevUID, PMPid}
+        gen_server:call(Pid, init_ets_table)
+    end.

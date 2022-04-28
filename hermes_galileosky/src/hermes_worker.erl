@@ -26,8 +26,6 @@ start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    %% создаём ETS таблицу для {DevUID :: bitstring(), PMPid :: pid()}
-    ets:new(?ETS_TABLE, [named_table]),
     %% отложенный старт
     self() ! start_server,
     {ok, {undefined, undefined}}.
@@ -74,7 +72,9 @@ handle_cast(_, State) ->
     {noreply, State}.
 
 handle_info(start_server, _State) ->
-    %% запускаем сервер при старте плагина на порту из конфига (или дефолт: 60521)
+    %% создаём ETS таблицу для {DevUID :: bitstring(), PMPid :: pid()}
+    ets:new(?ETS_TABLE, [named_table]),
+    %% запускаем сервер на порту из конфига (или дефолт: 60521)
     NewState = server(application:get_env(hermes_galileosky, tcp_port, 60521)),
     self() ! started_server,
     {noreply, NewState};
@@ -85,8 +85,14 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_, {ListenSocket, AMQPConnection}) ->
-    gen_tcp:close(ListenSocket),
-    amqp_connection:close(AMQPConnection),
+    case ListenSocket of
+        undefined -> ok;
+        _ -> gen_tcp:close(ListenSocket)
+    end,
+    case AMQPConnection of
+        undefined -> ok;
+        _ -> amqp_connection:close(AMQPConnection)
+    end,
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -95,7 +101,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%%----------------------------------------------------------------------------
 %% server
 server(Port) ->
+    % timer:sleep(10000),
+    wait_rabbit_start(),
     %% TODO: guard
+    {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_server">>),
+    {ok,_C} = amqp_connection:open_channel(AMQPConnection),
+    erlang:link(AMQPConnection),
     {ok, ListenSocket} = gen_tcp:listen(Port, [
         binary,
         {active, false},
@@ -105,8 +116,6 @@ server(Port) ->
         {nodelay, true},
         {backlog, 128}
     ]),
-    wait_rabbit_start(),
-    {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_server">>),
     %% -----------
     rabbit_log:info("Started Hermes Galileosky server at port ~p", [Port]),
     {ListenSocket, AMQPConnection}.

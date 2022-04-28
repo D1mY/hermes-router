@@ -8,7 +8,7 @@
 
 start_link() ->
     Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    start_workers(),
+    erlang:spawn_link(fun() -> start_workers() end),
     Res.
 
 init(_Args) ->
