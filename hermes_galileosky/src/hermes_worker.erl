@@ -39,16 +39,16 @@ handle_call(init_ets_table, _From, State) ->
 handle_call({init_qpusher, DevUID}, _From, State) ->
     PMPid =
         case ets:lookup(?ETS_TABLE, DevUID) of
-            [{_, Res}] ->
-                Res;
-            [] ->
-                undefined
+            [{_, Res}] -> Res;
+            _ -> undefined
         end,
     {_, AMQPConnection} = State,
     {reply, {PMPid, AMQPConnection}, State};
-handle_call({stop_qpusher, DevUID}, _From, State) ->
-    {_, PMPid} = ets:take(?ETS_TABLE, DevUID),
-    PMPid ! {abort, ok},
+handle_call({stop_pacman, DevUID}, _From, State) ->
+    case ets:take(?ETS_TABLE, DevUID) of
+        [{_, PMPid}] -> PMPid ! {abort, ok};
+        _ -> ok
+    end,
     {noreply, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
@@ -67,8 +67,8 @@ handle_cast(start_acceptors, State) ->
     [supervisor:start_child(hermes_accept_sup, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
     {noreply, State};
 handle_cast(start_qpushers, State) ->
-    QPuList = ets:tab2list(?ETS_TABLE),
-    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _} <- QPuList],
+    PacManList = ets:tab2list(?ETS_TABLE),
+    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _} <- PacManList],
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -106,7 +106,7 @@ server(Port) ->
         {backlog, 128}
     ]),
     wait_rabbit_start(),
-    {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, hermes_galileosky_server),
+    {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_server">>),
     %% -----------
     rabbit_log:info("Started Hermes Galileosky server at port ~p", [Port]),
     {ListenSocket, AMQPConnection}.

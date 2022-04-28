@@ -1,6 +1,6 @@
 PROJECT = hermes_json
 PROJECT_DESCRIPTION = Hermes -> JSON
-PROJECT_VERSION = 0.0.1
+PROJECT_MOD = hermes_json
 
 DEPS = rabbit_common rabbit amqp_client jsone
 

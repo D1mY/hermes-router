@@ -81,7 +81,7 @@ q_push(AMQPChannel, DevUID, BinData) ->
     ).
 
 close_all(DevUID, AMQPChannel) ->
-    gen_server:call(hermes_worker, {stop_qpusher, DevUID}),
+    gen_server:call(hermes_worker, {stop_pacman, DevUID}),
     rabbit_log:info("qpusher ended: AMQP channel ~p closing~n", [AMQPChannel]),
     % amqp_channel:unregister_flow_handler(AMQPChannel),
     amqp_channel:close(AMQPChannel).
