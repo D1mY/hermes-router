@@ -33,7 +33,7 @@ init([]) ->
 %%%----------------------------------------------------------------------------
 handle_call(init_ets_table, _From, State) ->
     ets:delete_all_objects(?ETS_TABLE),
-    {noreply, State};
+    {reply, ok, State};
 handle_call({init_qpusher, DevUID}, _From, State) ->
     PMPid =
         case ets:lookup(?ETS_TABLE, DevUID) of
@@ -47,12 +47,12 @@ handle_call({stop_pacman, DevUID}, _From, State) ->
         [{_, PMPid}] -> PMPid ! {abort, ok};
         _ -> ok
     end,
-    {noreply, State};
+    {reply, ok, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
 handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
-    ets:insert(?ETS_TABLE, {DevUID, PMPid}),
+    ets:update_element(?ETS_TABLE, DevUID, {3, PMPid}),
     case handle_socket(DevUID) of
         undefined ->
             PMPid ! {abort, ok};
@@ -66,7 +66,7 @@ handle_cast(start_acceptors, State) ->
     {noreply, State};
 handle_cast(start_qpushers, State) ->
     PacManList = ets:tab2list(?ETS_TABLE),
-    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _} <- PacManList],
+    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _} <- PacManList],
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -177,20 +177,25 @@ accept(Id, ListenSocket) ->
 %%% Private helpers
 
 %% рожаем новый или ищем запущенный обработчик данных от девайса.
+%% REDO: s_o_f_o sup acts other way
 handle_socket(DevUID) ->
-    case supervisor:start_child(hermes_q_pusher_sup, [DevUID]) of
-        %% новый девайс
-        {ok, Child} ->
-            Child;
-        {ok, Child, _Info} ->
-            Child;
-        %% девайс переподключился на новый сокет
-        {error, {already_started, Child}} ->
-            Child;
-        %% неведома херня
-        _ ->
-            undefined
-    end.
+    case ets:lookup_element(hermes_galileosky_server, DevUID, 2) of
+        QPPid ->
+            supervisor:start_child(hermes_q_pusher_sup, [DevUID]),
+    ok.
+    % case supervisor:start_child(hermes_q_pusher_sup, [DevUID]) of
+    %     %% новый девайс
+    %     {ok, Child} ->
+    %         Child;
+    %     {ok, Child, _Info} ->
+    %         Child;
+    %     %% девайс переподключился на новый сокет
+    %     {error, {already_started, Child}} ->
+    %         Child;
+    %     %% неведома херня
+    %     _ ->
+    %         undefined
+    % end.
 
 packet_getid(<<>>) ->
     %% no IMEI tag found
@@ -207,7 +212,6 @@ packet_getid(BinData) when erlang:is_binary(BinData) ->
     end.
 
 wait_rabbit_start() ->
-    rabbit_log:info("Her-Gal-Serv waiting for Rabbit...",[]),
     case rabbit:is_running() of
         false ->
             timer:sleep(1000),

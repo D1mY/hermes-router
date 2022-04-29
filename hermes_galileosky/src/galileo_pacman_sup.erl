@@ -33,7 +33,7 @@ init(_Args) ->
 init_ets() ->
     case erlang:whereis(hermes_worker) of
     undefined ->
-        timer:sleep(100),
+        timer:sleep(1000),
         init_ets();
     Pid ->
         %% init ETS table for pm states: {DevUID, PMPid}

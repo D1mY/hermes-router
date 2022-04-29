@@ -8,7 +8,7 @@
 
 start_link() ->
     Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    sys:trace(hermes_accept_sup, true),
+    % sys:trace(hermes_accept_sup, true),
     erlang:spawn_link(fun() -> start_workers() end),
     Res.
 
