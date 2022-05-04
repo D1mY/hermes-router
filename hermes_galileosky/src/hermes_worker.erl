@@ -37,14 +37,16 @@ handle_call(init_ets_table, _From, State) ->
 handle_call({init_qpusher, DevUID}, _From, State) ->
     PMPid =
         case ets:lookup(?ETS_TABLE, DevUID) of
-            [{_, Res}] -> Res;
-            _ -> undefined
+            [{DevUID, _, Res}] ->
+                Res;
+            _ ->
+                undefined
         end,
     {_, AMQPConnection} = State,
     {reply, {PMPid, AMQPConnection}, State};
 handle_call({stop_pacman, DevUID}, _From, State) ->
     case ets:take(?ETS_TABLE, DevUID) of
-        [{_, PMPid}] -> PMPid ! {abort, ok};
+        [{DevUID, _, PMPid}] -> PMPid ! {abort, ok};
         _ -> ok
     end,
     {reply, ok, State};
@@ -52,12 +54,16 @@ handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
 handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
-    ets:update_element(?ETS_TABLE, DevUID, {3, PMPid}),
+    % ets:update_element(?ETS_TABLE, DevUID, {3, PMPid}),
     case handle_socket(DevUID) of
         undefined ->
             PMPid ! {abort, ok};
         QPPid ->
-            QPPid ! {new_socket, PMPid, BinData}
+            %% объявляем новый пакман
+            QPPid ! {new_socket, PMPid, BinData},
+            %% регистрируем в ETS
+            %% (!) при каждом подключении девайса
+            ets:insert(?ETS_TABLE, {DevUID, QPPid, PMPid})
     end,
     {noreply, State};
 handle_cast(start_acceptors, State) ->
@@ -177,25 +183,27 @@ accept(Id, ListenSocket) ->
 %%% Private helpers
 
 %% рожаем новый или ищем запущенный обработчик данных от девайса.
-%% REDO: s_o_f_o sup acts other way
 handle_socket(DevUID) ->
-    case ets:lookup_element(hermes_galileosky_server, DevUID, 2) of
-        QPPid ->
-            supervisor:start_child(hermes_q_pusher_sup, [DevUID]),
-    ok.
-    % case supervisor:start_child(hermes_q_pusher_sup, [DevUID]) of
-    %     %% новый девайс
-    %     {ok, Child} ->
-    %         Child;
-    %     {ok, Child, _Info} ->
-    %         Child;
-    %     %% девайс переподключился на новый сокет
-    %     {error, {already_started, Child}} ->
-    %         Child;
-    %     %% неведома херня
-    %     _ ->
-    %         undefined
-    % end.
+    case ets:lookup(hermes_galileosky_server, DevUID) of
+        [{DevUID, CurrQPPid, CurrPMPid}] ->
+            CurrPMPid ! {abort, ok},
+            CurrQPPid;
+        _ ->
+            case supervisor:start_child(hermes_q_pusher_sup, [DevUID]) of
+                %% новый девайс
+                {ok, Child} ->
+                    Child;
+                {ok, Child, _Info} ->
+                    Child;
+                %% девайс переподключился на новый сокет
+                %% not in s_o_f_o supervisor case
+                {error, {already_started, Child}} ->
+                    Child;
+                %% any
+                _ ->
+                    undefined
+            end
+    end.
 
 packet_getid(<<>>) ->
     %% no IMEI tag found
