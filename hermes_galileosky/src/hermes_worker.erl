@@ -35,20 +35,22 @@ handle_call(init_ets_table, _From, State) ->
     ets:delete_all_objects(?ETS_TABLE),
     {reply, ok, State};
 handle_call({init_qpusher, DevUID}, _From, State) ->
+    {_, AMQPConnection} = State,
     PMPid =
         case ets:lookup(?ETS_TABLE, DevUID) of
-            [{DevUID, _, Res}] ->
+            [{DevUID, _, AMQPChannel, Res}] ->
                 Res;
             _ ->
                 undefined
         end,
-    {_, AMQPConnection} = State,
-    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
+    % {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
     {reply, {PMPid, AMQPChannel}, State};
 handle_call({stop_pacman, DevUID}, _From, State) ->
     case ets:take(?ETS_TABLE, DevUID) of
-        [{DevUID, _, PMPid}] -> PMPid ! {abort, ok};
-        _ -> ok
+        [{DevUID, _, _, PMPid}] ->
+            PMPid ! {abort, ok};
+        _ ->
+            ok
     end,
     {reply, ok, State};
 handle_call(_Msg, _From, State) ->
@@ -59,20 +61,21 @@ handle_cast(start_acceptors, State) ->
     [supervisor:start_child(hermes_accept_sup, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
     {noreply, State};
 handle_cast(start_qpushers, State) ->
-    PacManList = ets:tab2list(?ETS_TABLE),
-    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _} <- PacManList],
+    DevUIDList = ets:tab2list(?ETS_TABLE),
+    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _, _} <- DevUIDList],
     {noreply, State};
-handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
-    % ets:update_element(?ETS_TABLE, DevUID, {3, PMPid}),
+handle_cast({handle_socket, DevUID, PMPid, BinData}, State = {_, AMQPConnection}) ->
     case handle_socket(DevUID) of
         undefined ->
             PMPid ! {abort, ok};
         QPPid ->
+            %% рожаем канал
+            {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
             %% объявляем новый пакман
-            QPPid ! {new_socket, PMPid, BinData},
+            QPPid ! {new_socket, AMQPChannel, PMPid, BinData},
             %% регистрируем в ETS
             %% (!) при каждом подключении девайса
-            ets:insert(?ETS_TABLE, {DevUID, QPPid, PMPid})
+            ets:insert(?ETS_TABLE, {DevUID, QPPid, AMQPChannel, PMPid})
     end,
     {noreply, State};
 handle_cast(_, State) ->
@@ -185,7 +188,7 @@ accept(Id, ListenSocket) ->
 %% рожаем новый или ищем запущенный обработчик данных от девайса.
 handle_socket(DevUID) ->
     case ets:lookup(hermes_galileosky_server, DevUID) of
-        [{DevUID, CurrQPPid, CurrPMPid}] ->
+        [{DevUID, CurrQPPid, _, CurrPMPid}] ->
             CurrPMPid ! {abort, ok},
             CurrQPPid;
         _ ->
