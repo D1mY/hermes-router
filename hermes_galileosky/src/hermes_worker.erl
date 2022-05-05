@@ -43,7 +43,8 @@ handle_call({init_qpusher, DevUID}, _From, State) ->
                 undefined
         end,
     {_, AMQPConnection} = State,
-    {reply, {PMPid, AMQPConnection}, State};
+    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
+    {reply, {PMPid, AMQPChannel}, State};
 handle_call({stop_pacman, DevUID}, _From, State) ->
     case ets:take(?ETS_TABLE, DevUID) of
         [{DevUID, _, PMPid}] -> PMPid ! {abort, ok};
@@ -53,6 +54,14 @@ handle_call({stop_pacman, DevUID}, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
+handle_cast(start_acceptors, State) ->
+    {ListenSocket, _} = State,
+    [supervisor:start_child(hermes_accept_sup, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
+    {noreply, State};
+handle_cast(start_qpushers, State) ->
+    PacManList = ets:tab2list(?ETS_TABLE),
+    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _} <- PacManList],
+    {noreply, State};
 handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
     % ets:update_element(?ETS_TABLE, DevUID, {3, PMPid}),
     case handle_socket(DevUID) of
@@ -65,14 +74,6 @@ handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
             %% (!) при каждом подключении девайса
             ets:insert(?ETS_TABLE, {DevUID, QPPid, PMPid})
     end,
-    {noreply, State};
-handle_cast(start_acceptors, State) ->
-    {ListenSocket, _} = State,
-    [supervisor:start_child(hermes_accept_sup, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
-    {noreply, State};
-handle_cast(start_qpushers, State) ->
-    PacManList = ets:tab2list(?ETS_TABLE),
-    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _} <- PacManList],
     {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
@@ -111,7 +112,6 @@ server(Port) ->
     wait_rabbit_start(),
     %% TODO: guard
     {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_server">>),
-    {ok,_C} = amqp_connection:open_channel(AMQPConnection),
     erlang:link(AMQPConnection),
     {ok, ListenSocket} = gen_tcp:listen(Port, [
         binary,
