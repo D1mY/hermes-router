@@ -12,18 +12,19 @@ start_link(DevUID) ->
 
 %% инит пихателя в очередь
 q_pusher_init(DevUID) ->
-    {PMPid, AMQPConnection} = gen_server:call(hermes_worker, {init_qpusher, DevUID}),
+    {PMPid, AMQPChannel} = gen_server:call(hermes_worker, {init_qpusher, DevUID}),
     q_pusher_init(DevUID, PMPid, AMQPConnection).
 q_pusher_init(_, undefined, _) ->
     ok;
-q_pusher_init(DevUID, PMPid, AMQPConnection) ->
+q_pusher_init(DevUID, PMPid, undefined) ->
+    AMQPChannel = gen_server:call(hermes_galileosky_server, {new_qpchannel, DevUID}),
+    q_pusher_init(DevUID, PMPid, AMQPChannel);
+q_pusher_init(DevUID, PMPid, AMQPChannel) ->
     %,arguments=[{<<"x-queue-mode">>,longstr,<<"lazy">>}]}), %% maybe needed "lazy queues" 4 low RAM hardware
-    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
     #'queue.declare_ok'{} = amqp_channel:call(AMQPChannel, #'queue.declare'{
         queue = DevUID, durable = true
     }),
     % amqp_channel:register_flow_handler(AMQPChannel, self()),
-    gen_server:cast(hermes_galileosky_server, {set_qpchannel, AMQPChannel}),
     q_pusher(DevUID, PMPid, AMQPChannel).
 
 %% пихатель в очередь (свою для каждого устройства), единственный для каждого устройства.
@@ -83,6 +84,6 @@ q_push(AMQPChannel, DevUID, BinData) ->
 
 close_all(DevUID, AMQPChannel) ->
     gen_server:call(hermes_worker, {stop_pacman, DevUID}),
-    rabbit_log:info("qpusher ended: AMQP channel ~p closing~n", [AMQPChannel]),
     % amqp_channel:unregister_flow_handler(AMQPChannel),
-    amqp_channel:close(AMQPChannel).
+    amqp_channel:close(AMQPChannel),
+    rabbit_log:info("qpusher for ~p ended, AMQPChannel ~p closed", [DevUID, AMQPChannel]).

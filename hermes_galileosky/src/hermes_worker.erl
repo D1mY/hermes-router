@@ -35,7 +35,6 @@ handle_call(init_ets_table, _From, State) ->
     ets:delete_all_objects(?ETS_TABLE),
     {reply, ok, State};
 handle_call({init_qpusher, DevUID}, _From, State) ->
-    {_, AMQPConnection} = State,
     PMPid =
         case ets:lookup(?ETS_TABLE, DevUID) of
             [{DevUID, _, AMQPChannel, Res}] ->
@@ -43,8 +42,13 @@ handle_call({init_qpusher, DevUID}, _From, State) ->
             _ ->
                 undefined
         end,
-    % {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
     {reply, {PMPid, AMQPChannel}, State};
+handle_call({new_qpchannel, DevUID}, _From, State = {_, AMQPConnection}) ->
+    %% TODO: guard
+    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
+    %% -----------
+    ets:update_element(?ETS_TABLE, DevUID, {3, AMQPChannel}),
+    {reply, AMQPChannel, State};
 handle_call({stop_pacman, DevUID}, _From, State) ->
     case ets:take(?ETS_TABLE, DevUID) of
         [{DevUID, _, _, PMPid}] ->
@@ -68,7 +72,7 @@ handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
     case handle_socket(DevUID) of
         undefined ->
             PMPid ! {abort, ok};
-        QPPid ->
+        {QPPid, AMQPChannel} ->
             %% объявляем новый пакман
             QPPid ! {new_socket, PMPid, BinData},
             %% регистрируем в ETS
@@ -109,7 +113,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%%----------------------------------------------------------------------------
 %% server
 server(Port) ->
-    % timer:sleep(10000),
     wait_rabbit_start(),
     %% TODO: guard
     {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_server">>),
@@ -186,20 +189,20 @@ accept(Id, ListenSocket) ->
 %% рожаем новый или ищем запущенный обработчик данных от девайса.
 handle_socket(DevUID) ->
     case ets:lookup(hermes_galileosky_server, DevUID) of
-        [{DevUID, CurrQPPid, _, CurrPMPid}] ->
+        [{DevUID, CurrQPPid, AMQPChannel, CurrPMPid}] ->
             CurrPMPid ! {abort, ok},
-            CurrQPPid;
+            {CurrQPPid, AMQPChannel};
         _ ->
             case supervisor:start_child(hermes_q_pusher_sup, [DevUID]) of
                 %% новый девайс
                 {ok, Child} ->
-                    Child;
+                    {Child, undefined};
                 {ok, Child, _Info} ->
-                    Child;
+                    {Child, undefined};
                 %% девайс переподключился на новый сокет
                 %% not in s_o_f_o supervisor case
                 {error, {already_started, Child}} ->
-                    Child;
+                    {Child, undefined};
                 %% any
                 _ ->
                     undefined
