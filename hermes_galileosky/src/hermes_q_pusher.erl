@@ -23,21 +23,22 @@ q_pusher_init(DevUID, PMPid, AMQPConnection) ->
         queue = DevUID, durable = true
     }),
     % amqp_channel:register_flow_handler(AMQPChannel, self()),
-    q_pusher(DevUID, PMPid, AMQPConnection, AMQPChannel).
+    gen_server:cast(hermes_galileosky_server, {set_qpchannel, AMQPChannel}),
+    q_pusher(DevUID, PMPid, AMQPChannel).
 
 %% пихатель в очередь (свою для каждого устройства), единственный для каждого устройства.
-q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) ->
+q_pusher(DevUID, CurrPMPid, AMQPChannel) ->
     receive
         {p_m, PMPid, Socket, Crc, BinData} ->
             case q_push(AMQPChannel, DevUID, BinData) of
                 ok ->
                     gen_tcp:send(Socket, [<<2>>, Crc]),
                     PMPid ! {get, self()},
-                    q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel);
+                    q_pusher(DevUID, CurrPMPid, AMQPChannel);
                 blocked ->
                     timer:sleep(1000),
                     PMPid ! {get, self()},
-                    q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel);
+                    q_pusher(DevUID, CurrPMPid, AMQPChannel);
                 closing ->
                     close_all(DevUID, AMQPChannel)
             end;
@@ -51,17 +52,17 @@ q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel) ->
                         false ->
                             CurrPMPid ! {abort, ok}
                     end,
-                    q_pusher(DevUID, NewPMPid, AMQPConnection, AMQPChannel);
+                    q_pusher(DevUID, NewPMPid, AMQPChannel);
                 blocked ->
                     timer:sleep(1000),
                     self() ! {new_socket, NewPMPid, BinData},
-                    q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel);
+                    q_pusher(DevUID, CurrPMPid, AMQPChannel);
                 closing ->
                     close_all(DevUID, AMQPChannel)
             end;
         Any ->
             rabbit_log:info("qpusher ~p recieved: ~p~n", [DevUID, Any]),
-            q_pusher(DevUID, CurrPMPid, AMQPConnection, AMQPChannel)
+            q_pusher(DevUID, CurrPMPid, AMQPChannel)
     after 666000 ->
         close_all(DevUID, AMQPChannel)
     end.

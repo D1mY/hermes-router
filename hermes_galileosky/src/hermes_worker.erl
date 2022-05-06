@@ -64,15 +64,13 @@ handle_cast(start_qpushers, State) ->
     DevUIDList = ets:tab2list(?ETS_TABLE),
     [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _, _} <- DevUIDList],
     {noreply, State};
-handle_cast({handle_socket, DevUID, PMPid, BinData}, State = {_, AMQPConnection}) ->
+handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
     case handle_socket(DevUID) of
         undefined ->
             PMPid ! {abort, ok};
         QPPid ->
-            %% рожаем канал
-            {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
             %% объявляем новый пакман
-            QPPid ! {new_socket, AMQPChannel, PMPid, BinData},
+            QPPid ! {new_socket, PMPid, BinData},
             %% регистрируем в ETS
             %% (!) при каждом подключении девайса
             ets:insert(?ETS_TABLE, {DevUID, QPPid, AMQPChannel, PMPid})
