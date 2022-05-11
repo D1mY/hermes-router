@@ -13,11 +13,11 @@ start_link(DevUID) ->
 %% инит пихателя в очередь
 q_pusher_init(DevUID) ->
     {PMPid, AMQPChannel} = gen_server:call(hermes_worker, {init_qpusher, DevUID}),
-    q_pusher_init(DevUID, PMPid, AMQPConnection).
+    q_pusher_init(DevUID, PMPid, AMQPChannel).
 q_pusher_init(_, undefined, _) ->
     ok;
 q_pusher_init(DevUID, PMPid, undefined) ->
-    AMQPChannel = gen_server:call(hermes_galileosky_server, {new_qpchannel, DevUID}),
+    AMQPChannel = gen_server:call(hermes_worker, {new_qpchannel, DevUID}),
     q_pusher_init(DevUID, PMPid, AMQPChannel);
 q_pusher_init(DevUID, PMPid, AMQPChannel) ->
     %,arguments=[{<<"x-queue-mode">>,longstr,<<"lazy">>}]}), %% maybe needed "lazy queues" 4 low RAM hardware

@@ -35,14 +35,14 @@ handle_call(init_ets_table, _From, State) ->
     ets:delete_all_objects(?ETS_TABLE),
     {reply, ok, State};
 handle_call({init_qpusher, DevUID}, _From, State) ->
-    PMPid =
+    Res =
         case ets:lookup(?ETS_TABLE, DevUID) of
-            [{DevUID, _, AMQPChannel, Res}] ->
-                Res;
+            [{DevUID, _, AMQPChannel, PMPid}] ->
+                {PMPid, AMQPChannel};
             _ ->
-                undefined
+                {undefined, undefined}
         end,
-    {reply, {PMPid, AMQPChannel}, State};
+    {reply, Res, State};
 handle_call({new_qpchannel, DevUID}, _From, State = {_, AMQPConnection}) ->
     %% TODO: guard
     {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
