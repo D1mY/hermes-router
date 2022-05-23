@@ -194,11 +194,10 @@ configure(State = #state{channel = Channel}) ->
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}
     ),
     erlang:register(?MODULE, self()),
-    rabbit_log:info("Hermes Galileosky broker started",[]),
+    rabbit_log:info("Hermes Galileosky broker started", []),
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
-    %% TODO: garbage previous Connection (stored in ETS 'connection_created' table) (?)
     {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
     {ok, Channel} = amqp_connection:open_channel(Connection),
     %% will terminate RMQ connection after die

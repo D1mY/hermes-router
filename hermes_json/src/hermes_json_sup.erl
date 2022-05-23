@@ -13,11 +13,29 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, {{one_for_one, 3, 10},
-          [{hermesenc,
-            {hermesenc, start_link, []},
-            permanent,
-            10000,
-            worker,
-            [hermesenc]}
-          ]}}.
+    {ok,
+        {
+            #{
+                strategy => rest_for_one,
+                intensity => 3,
+                period => 10
+            },
+            [
+                #{
+                    id => hermesenc,
+                    start => {hermesenc, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [hermesenc]
+                },
+                #{
+                    id => json_pusher_sup,
+                    start => {json_pusher_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => supervisor,
+                    modules => [json_pusher_sup, jsone]
+                }
+            ]
+        }}.
