@@ -32,6 +32,8 @@ init([]) ->
 
 %%%----------------------------------------------------------------------------
 handle_call(init_ets_table, _From, State) ->
+    AMQPChannelsList = ets:tab2list(?ETS_TABLE),
+    [amqp_channel:close(AMQPChannel) || {_, _, AMQPChannel, _} <- AMQPChannelsList],
     ets:delete_all_objects(?ETS_TABLE),
     {reply, ok, State};
 handle_call({init_qpusher, DevUID}, _From, State) ->
@@ -84,7 +86,7 @@ handle_cast(_, State) ->
     {noreply, State}.
 
 handle_info(start_server, _State) ->
-    %% создаём ETS таблицу для {DevUID :: bitstring(), PMPid :: pid()}
+    %% создаём ETS таблицу для {DevUID :: bitstring(), QPPid :: pid(), AMQPChannel :: pid(), PMPid :: pid()}
     ets:new(?ETS_TABLE, [named_table]),
     %% запускаем сервер на порту из конфига (или дефолт: 60521)
     NewState = server(application:get_env(hermes_galileosky, tcp_port, 60521)),
@@ -115,7 +117,9 @@ code_change(_OldVsn, State, _Extra) ->
 server(Port) ->
     wait_rabbit_start(),
     %% TODO: guard
-    {ok, AMQPConnection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_server">>),
+    {ok, AMQPConnection} = amqp_connection:start(
+        #amqp_params_direct{}, <<"hermes_galileosky_server">>
+    ),
     erlang:link(AMQPConnection),
     {ok, ListenSocket} = gen_tcp:listen(Port, [
         binary,
