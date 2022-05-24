@@ -14,7 +14,6 @@
     code_change/3
 ]).
 -export([
-    % server/1,
     accept/2
 ]).
 
@@ -26,7 +25,6 @@ start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    %% отложенный старт
     self() ! start_server,
     {ok, {undefined, undefined}}.
 

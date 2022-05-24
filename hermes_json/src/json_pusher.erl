@@ -13,7 +13,6 @@ start_link(Q) ->
     {ok, erlang:spawn_link(?MODULE, start, [Q])}.
 
 start(Q) when erlang:is_bitstring(Q) ->
-    wait_server(),
     Connection = gen_server:call(hermesenc, get_connection),
     start(Q, Connection);
 start(Any) ->
@@ -45,7 +44,6 @@ loop(Channel) ->
 
 handle_content(Res, []) ->
     jsx:encode(Res);
-% jsone:encode(Res, [{float_format, [{decimals, 6}, compact]}]);
 handle_content(Acc, Payload) ->
     %% Payload :: [{[{tag1,Val1},...,{tagN,ValN}]},...,{[{tag1,Val1},...,{tagN,ValN}]}]
     %% Cfg :: [{tag1,Fun1},...,{tagN,FunN}]
@@ -95,13 +93,4 @@ ack_points(Channel, DlvrTag) ->
             ack_points(Channel, DlvrTag);
         closing ->
             ok
-    end.
-
-wait_server() ->
-    case erlang:whereis(hermesenc) of
-        undefined ->
-            timer:sleep(1000),
-            wait_server();
-        Pid ->
-            gen_server:cast(Pid, start_qpushers)
     end.

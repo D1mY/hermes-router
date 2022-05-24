@@ -38,6 +38,5 @@ init_ets() ->
             timer:sleep(1000),
             init_ets();
         Pid ->
-            %% init ETS table for pm states: {DevUID, PMPid}
             gen_server:call(Pid, init_ets_table)
     end.

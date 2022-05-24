@@ -35,6 +35,9 @@ handle_call(get_connection, _From, State) ->
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
+handle_cast(start_json_pushers, State) ->
+    pusher_schedule(16),
+    {noreply, State};
 handle_cast(_, State) ->
     {noreply, State}.
 
@@ -91,7 +94,6 @@ start() ->
         Channel, #'basic.consume'{queue = <<"hermes_json_cfg">>}, self()
     ),
     read_cfg_file(cfg_path()),
-    pusher_schedule(16),
     #state{connection = Connection, channel = Channel, consumer_tag = ConsTag}.
 
 handle_content(Content) ->
@@ -114,7 +116,6 @@ pusher_schedule(0) ->
     ok;
 pusher_schedule(Num) ->
     supervisor:start_child(json_pusher_sup, [<<"hermes">>]),
-    % erlang:spawn_link(json_pusher, start, [<<"hermes">>]),
     pusher_schedule(Num - 1).
 
 %%%----------------------------------------------------------------------------

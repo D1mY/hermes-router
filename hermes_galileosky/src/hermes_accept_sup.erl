@@ -8,7 +8,6 @@
 
 start_link() ->
     Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
-    % sys:trace(hermes_accept_sup, true),
     erlang:spawn_link(fun() -> start_workers() end),
     Res.
 
@@ -16,7 +15,8 @@ init(_Args) ->
     SupervisorSpecification = #{
         strategy => simple_one_for_one,
         intensity => 10,
-        period => 60},
+        period => 60
+    },
 
     ChildSpecifications = [
         #{
@@ -32,12 +32,12 @@ init(_Args) ->
     {ok, {SupervisorSpecification, ChildSpecifications}}.
 
 start_workers() ->
-case erlang:whereis(hermes_worker) of
-    undefined ->
-        timer:sleep(1000),
-        start_workers();
-    Pid ->
-        gen_server:cast(Pid, start_acceptors)
+    case erlang:whereis(hermes_worker) of
+        undefined ->
+            timer:sleep(1000),
+            start_workers();
+        Pid ->
+            gen_server:cast(Pid, start_acceptors)
     end.
 
 start_worker(Id, ListenSocket) ->

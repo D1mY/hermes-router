@@ -23,14 +23,11 @@
 }).
 
 start_link() ->
-    % gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
     gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    % process_flag(trap_exit, true),
     case decmap:unfold() of
         true ->
-            %% delayed init
             self() ! configure;
         false ->
             rabbit_log:info("Hermes Galileosky broker fatal: decmap unfold error during init")

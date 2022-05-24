@@ -42,8 +42,6 @@ packet_manager(Socket, TimeOut) ->
     end,
     stop(Socket).
 
-% handle_error({error, closed}, Socket, _, _) ->
-%     stop(Socket);
 handle_error({error, timeout}, Socket, CallersPid, TimeOut) ->
     self() ! {get, CallersPid},
     %% рекурсия для проверки сообщений из "почтового ящика"

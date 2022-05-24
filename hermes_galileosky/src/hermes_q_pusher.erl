@@ -24,7 +24,6 @@ q_pusher_init(DevUID, PMPid, AMQPChannel) ->
     #'queue.declare_ok'{} = amqp_channel:call(AMQPChannel, #'queue.declare'{
         queue = DevUID, durable = true
     }),
-    % amqp_channel:register_flow_handler(AMQPChannel, self()),
     q_pusher(DevUID, PMPid, AMQPChannel).
 
 %% пихатель в очередь (свою для каждого устройства), единственный для каждого устройства.
@@ -84,6 +83,5 @@ q_push(AMQPChannel, DevUID, BinData) ->
 
 close_all(DevUID, AMQPChannel) ->
     gen_server:call(hermes_worker, {stop_pacman, DevUID}),
-    % amqp_channel:unregister_flow_handler(AMQPChannel),
     amqp_channel:close(AMQPChannel),
     rabbit_log:info("qpusher for ~p ended, AMQPChannel ~p closed", [DevUID, AMQPChannel]).

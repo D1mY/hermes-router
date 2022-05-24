@@ -7,7 +7,9 @@
 -export([init/1]).
 
 start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+    Res = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
+    erlang:spawn_link(fun() -> start_workers() end),
+    Res.
 
 init(_Args) ->
     SupervisorSpecification = #{
@@ -22,7 +24,7 @@ init(_Args) ->
             id => json_pusher,
             start => {json_pusher, start_link, []},
             % permanent | transient | temporary
-            restart => temporary,
+            restart => transient,
             shutdown => 2000,
             % worker | supervisor
             type => worker,
@@ -31,3 +33,12 @@ init(_Args) ->
     ],
 
     {ok, {SupervisorSpecification, ChildSpecifications}}.
+
+start_workers() ->
+    case erlang:whereis(hermesenc) of
+        undefined ->
+            timer:sleep(1000),
+            start_workers();
+        Pid ->
+            gen_server:cast(Pid, start_json_pushers)
+    end.
