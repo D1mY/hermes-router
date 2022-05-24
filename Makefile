@@ -1,6 +1,5 @@
-DEPS = rabbit_common rabbit amqp_client jsone
+DEPS = rabbit_common rabbit amqp_client
 
-dep_jsone = git https://github.com/sile/jsone
 DEP_EARLY_PLUGINS = rabbit_common/mk/rabbitmq-early-plugin.mk
 DEP_PLUGINS = rabbit_common/mk/rabbitmq-plugin.mk
 
