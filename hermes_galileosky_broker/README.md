@@ -1,7 +1,7 @@
 # Hermes Galileosky protocol broker
 ## About
-Application providing:
+Provides:
 
-* parsing packets of points by Galileosky protocol to list of Erlang terms
-* transfering parsed lists as messages to RabbitMQ exchange `hermes.fanout` with key `hermes`
-* listening configs from `hermes_galileosky_cfg` queue
+* parsing packets of Galileosky protocol points to list of Erlang terms
+* publishing parsed lists as messages to RabbitMQ exchange `hermes.fanout` with key `hermes`
+* listening config messages from `hermes_galileosky_broker_cfg` queue
