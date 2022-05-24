@@ -26,7 +26,7 @@ init(_Args) ->
             shutdown => 2000,
             % worker | supervisor
             type => worker,
-            modules => [json_pusher]
+            modules => [json_pusher, jsone]
         }
     ],
 

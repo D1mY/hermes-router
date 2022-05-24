@@ -2,10 +2,8 @@ PROJECT = hermes_json
 PROJECT_DESCRIPTION = Hermes -> JSON
 PROJECT_MOD = hermes_json
 
-DEPS = rabbit_common rabbit amqp_client
-BUILD_DEPS = jsone
+DEPS = rabbit_common rabbit amqp_client jsx
 
-dep_jsone = git https://github.com/sile/jsone
 DEP_EARLY_PLUGINS = rabbit_common/mk/rabbitmq-early-plugin.mk
 DEP_PLUGINS = rabbit_common/mk/rabbitmq-plugin.mk
 
