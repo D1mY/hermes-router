@@ -1,104 +1,139 @@
 %%% Decode Galileosky packets to Erlang terms,
-%%% and pushing them to ebtq queue
+%%% and pushing them to RMQ exchange
 -module(galileosky_pusher).
 
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
 
 -export([
-        start/1
-        ]).
+    start/1,
+    init/1
+]).
 
 start(Q) when erlang:is_bitstring(Q) ->
-  packet_decoder(Q);
+    {ok, erlang:spawn_link(?MODULE, init, [Q])};
 start(Any) ->
-  rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p~n", [erlang:process_info(self(), registered_name),Any]).
+    rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [
+        self(), Any
+    ]).
 
-packet_decoder({not_found, Q}) ->
-  rabbit_log:info("Hermes Galileosky connection not found by pusher for ~p~n",[Q]);
-packet_decoder(Q) ->
-  case Connection = persistent_term:get({hermes_galileosky_broker,rabbitmq_connection}, not_found) of
-    not_found -> packet_decoder({not_found, Q});
-    _ -> ok
-  end,
-  Channel = intercourse(Q, Connection, amqp_connection:open_channel(Connection)),
-  #'queue.declare_ok'{} = amqp_channel:call(Channel, #'queue.declare'{queue = Q, durable=true}),
-  #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = Q}, self()),
-  loop(Channel, []),
-  amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
-  rabbit_log:info("Hermes Galileosky pusher ~p channel close: ~p~n", [Q, amqp_channel:close(Channel)]).
-
-intercourse(_, _, {ok, Channel}) -> Channel;
-intercourse(Q, Connection, {error, _}) ->
-  timer:sleep(1000),
-  intercourse(Q, Connection, amqp_connection:open_channel(Connection,1)).
+init(Q) ->
+    CfgPath = gen_server:call(galileoskydec, get_cfg_path),
+    Cfg = read_cfg_file(CfgPath, Q),
+    self() ! {cfg, Cfg},
+    Channel = gen_server:call(galileoskydec, {get_channel, Q}),
+    loop(Channel, []),
+    ok.
 
 loop(Channel, CfgMap) ->
-  receive
-    {#'basic.deliver'{delivery_tag = DlvrTag}, Content} ->
-      % IMEI ("uid") should be in header
-      Res = handle_content(Content, CfgMap),
-      case publish_points(Channel, erlang:term_to_binary(Res, [compressed]), DlvrTag) of
-        ok -> loop(Channel, CfgMap);
-        Any -> Any
-      end;
-    {cfg,Payload} -> % {cfg,_} received first of all
-      handle_cfg(Channel, Payload);
-    {stop,CallersPid} ->
-      rabbit_log:info("Hermes Galileosky pusher ~p stopped by broker ~p~n", [erlang:process_info(self(), registered_name),CallersPid]);
-    #'basic.cancel_ok'{} ->
-      {ok, <<"Cancel">>};
-     % Drop other not valid messages
-    _ -> loop(Channel, CfgMap)
-  end.
-
-handle_cfg(Channel, Payload) ->
-  CfgMap = maps:merge(maps:from_list(ets:tab2list(galskytags)), maps:from_list(Payload)),
-  loop(Channel, CfgMap).
+    receive
+        {#'basic.deliver'{delivery_tag = DlvrTag}, Content} ->
+            %% IMEI ("uid") should be in header
+            Res = handle_content(Content, CfgMap),
+            case publish_points(Channel, Res, DlvrTag) of
+                ok -> loop(Channel, CfgMap);
+                %% TODO: handle this
+                Any -> Any
+            end;
+        {cfg, Payload} ->
+            CfgMap1 = maps:merge(maps:from_list(ets:tab2list(galskytags)), maps:from_list(Payload)),
+            loop(Channel, CfgMap1);
+        #'basic.consume_ok'{consumer_tag = ConsTag} ->
+            erlang:put(consumer_tag, ConsTag),
+            loop(Channel, CfgMap);
+        #'basic.cancel_ok'{consumer_tag = ConsTag} ->
+            case ConsTag == erlang:get(consumer_tag) of
+                true ->
+                    ok;
+                false ->
+                    loop(Channel, CfgMap)
+            end;
+        _ ->
+            loop(Channel, CfgMap)
+    end.
 
 handle_content(Content, CfgMap) ->
-  case Content#amqp_msg.props#'P_basic'.headers of
-    [{<<"uid">>, _, DevUID}] ->
-      Payload = Content#amqp_msg.payload,
-      push_data(CfgMap, Payload, 0, DevUID, [], []);
-    _ ->
-      not_valid
-  end.
+    case Content#amqp_msg.props#'P_basic'.headers of
+        [{<<"uid">>, _, DevUID}] ->
+            Payload = Content#amqp_msg.payload,
+            Res = parse_data(CfgMap, Payload, 0, DevUID, [], []),
+            erlang:term_to_binary(Res, [compressed]);
+        _ ->
+            not_valid
+    end.
 
 publish_points(_, not_valid, _) ->
-  ok;
+    ok;
 publish_points(Channel, Res, DlvrTag) ->
-  case amqp_channel:call(Channel,
-                         #'basic.publish'{exchange = <<"hermes.fanout">>, routing_key = <<"hermes">>},
-                         #amqp_msg{props = #'P_basic'{delivery_mode = 2}, payload = Res}) of
-    ok -> ack_points(Channel, DlvrTag);
-    blocked -> timer:sleep(3000),
-      publish_points(Channel, Res, DlvrTag);
-    closing -> closing
-  end.
+    case
+        amqp_channel:call(
+            Channel,
+            #'basic.publish'{exchange = <<"hermes.fanout">>, routing_key = <<"hermes">>},
+            #amqp_msg{props = #'P_basic'{delivery_mode = 2}, payload = Res}
+        )
+    of
+        ok ->
+            ack_points(Channel, DlvrTag);
+        blocked ->
+            timer:sleep(1000),
+            publish_points(Channel, Res, DlvrTag);
+        closing ->
+            closing
+    end.
+
+%% message of 1 point
+parse_data(_, <<>>, _, DevUID, Acc, []) ->
+    [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])}];
+%% message of many points
+parse_data(_, <<>>, _, DevUID, Acc, TArr) ->
+    [{lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])} | TArr];
+parse_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
+    <<Tag:8, Tail/binary>> = Payload,
+    case Tag >= PrevTag of
+        %% accumulate new line of terms
+        true ->
+            case maps:get(Tag, CfgMap, not_found) of
+                {Len, ExtractFun} ->
+                    <<Data:Len/binary, Tail1/binary>> = Tail,
+                    parse_data(CfgMap, Tail1, Tag, DevUID, [ExtractFun(Data) | Acc], TArr);
+                not_found ->
+                    parse_data(
+                        CfgMap,
+                        <<>>,
+                        Tag,
+                        DevUID,
+                        [{lists:flatten(Acc, [{<<"unknown_galileosky_protocol_tag">>, Tag}])}],
+                        TArr
+                    )
+            end;
+        %% lot of points in message
+        false ->
+            parse_data(CfgMap, Payload, 0, DevUID, [], [
+                {lists:flatten(Acc, [{<<"dev_uid">>, DevUID}])} | TArr
+            ])
+    end.
+
+%%%-----------------------------------------------------------------------------
+%%% helpers
+read_cfg_file(error, _) ->
+    [];
+read_cfg_file(Path, Q) ->
+    File = Path ++ "/hermes_galileosky_" ++ erlang:binary_to_list(Q),
+    case file:read_file(File) of
+        {ok, T} ->
+            %% TODO: enshure T is list in binary
+            erlang:binary_to_term(T);
+        {error, Reason} ->
+            rabbit_log:info("Hermes Galileosky pusher: cfg ~p read error: ~p", [
+                File, Reason
+            ]),
+            read_cfg_file(error, Reason)
+    end.
 
 ack_points(Channel, DlvrTag) ->
-  case amqp_channel:call(Channel,#'basic.ack'{delivery_tag = DlvrTag}) of
-    ok -> ok;
-    blocked -> timer:sleep(3000),
-      ack_points(Channel, DlvrTag);
-    closing -> closing
-  end.
-
-push_data(_, <<>>, _, DevUID, Acc, []) -> % message of 1 point
-  [{lists:flatten(Acc,[{<<"dev_uid">>,DevUID}])}];
-push_data(_, <<>>, _, DevUID, Acc, TArr) -> % message of many points
-  [{lists:flatten(Acc,[{<<"dev_uid">>,DevUID}])}|TArr];
-push_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
-  <<Tag:8,Tail/binary>> = Payload,
-  case Tag >= PrevTag of
-    true -> % accumulate new line of terms
-      case maps:get(Tag, CfgMap, not_found) of
-        {Len, ExtractFun} ->
-          <<Data:Len/binary,Tail1/binary>> = Tail,
-          push_data(CfgMap, Tail1, Tag, DevUID, [ExtractFun(Data)|Acc], TArr);
-        not_found-> 
-          push_data(CfgMap, <<>>, Tag, DevUID, [{lists:flatten(Acc,[{<<"unknown_galileosky_protocol_tag">>,Tag}])}], TArr)
-      end;
-    false -> % lot of points in message
-      push_data(CfgMap, Payload, 0, DevUID, [], [{lists:flatten(Acc,[{<<"dev_uid">>,DevUID}])}|TArr])
-  end.
+    case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of
+        blocked ->
+            timer:sleep(1000),
+            ack_points(Channel, DlvrTag);
+        _ ->
+            ok
+    end.

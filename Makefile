@@ -1,9 +1,6 @@
-PROJECT = hermes_galileosky_broker
-PROJECT_DESCRIPTION = Hermes Galileosky broker
-PROJECT_MOD = hermes_galileosky_broker
+DEPS = rabbit_common rabbit amqp_client jsone
 
-DEPS = rabbit_common rabbit amqp_client
-
+dep_jsone = git https://github.com/sile/jsone
 DEP_EARLY_PLUGINS = rabbit_common/mk/rabbitmq-early-plugin.mk
 DEP_PLUGINS = rabbit_common/mk/rabbitmq-plugin.mk
 

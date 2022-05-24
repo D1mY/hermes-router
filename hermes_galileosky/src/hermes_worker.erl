@@ -1,117 +1,235 @@
 -module(hermes_worker).
+
+-include_lib("../deps/amqp_client/include/amqp_client.hrl").
+
 -behaviour(gen_server).
 
 -export([start_link/0]).
 -export([
-        init/1,
-        handle_call/3,
-        handle_cast/2,
-        handle_info/2,
-        terminate/2,
-        code_change/3
-        ]).
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 -export([
-		server/1,
-		accept/2	
-		]).
+    accept/2
+]).
 
--define(PROCNUM, 9). %% Кол-во ожидающих accept-ов
+%% Кол-во ожидающих accept-ов минус один
+-define(PROCNUM, 9).
+-define(ETS_TABLE, hermes_galileosky_server).
 
 start_link() ->
-    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    server(application:get_env(hermes_galileosky, tcp_port, 60521)). %% запускаем сервер при старте плагина на порту из конфига (или дефолт: 60521)
-    % gen_server:cast({global,?MODULE}, {server, Port}),
-    % rabbit_log:info("Ya sdelyallll ;)",[]),
-    % {ok, {?MODULE, Port}}.
+    self() ! start_server,
+    {ok, {undefined, undefined}}.
 
-%----------------------------------------------
+%%%----------------------------------------------------------------------------
+handle_call(init_ets_table, _From, State) ->
+    AMQPChannelsList = ets:tab2list(?ETS_TABLE),
+    [amqp_channel:close(AMQPChannel) || {_, _, AMQPChannel, _} <- AMQPChannelsList],
+    ets:delete_all_objects(?ETS_TABLE),
+    {reply, ok, State};
+handle_call({init_qpusher, DevUID}, _From, State) ->
+    Res =
+        case ets:lookup(?ETS_TABLE, DevUID) of
+            [{DevUID, _, AMQPChannel, PMPid}] ->
+                {PMPid, AMQPChannel};
+            _ ->
+                {undefined, undefined}
+        end,
+    {reply, Res, State};
+handle_call({new_qpchannel, DevUID}, _From, State = {_, AMQPConnection}) ->
+    %% TODO: guard
+    {ok, AMQPChannel} = amqp_connection:open_channel(AMQPConnection),
+    %% -----------
+    ets:update_element(?ETS_TABLE, DevUID, {3, AMQPChannel}),
+    {reply, AMQPChannel, State};
+handle_call({stop_pacman, DevUID}, _From, State) ->
+    case ets:take(?ETS_TABLE, DevUID) of
+        [{DevUID, _, _, PMPid}] ->
+            PMPid ! {abort, ok};
+        _ ->
+            ok
+    end,
+    {reply, ok, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 
-
-% handle_cast({server, Port}, State)->
-%     {ok, ListenSocket} = gen_tcp:listen(Port, [binary,{active,false},{reuseaddr,true},{exit_on_close,true},{keepalive,false},{nodelay,true},{backlog,128}]),
-%     rabbit_log:info("Started Hermes-Galileosky server at port ~p~n", [Port]),
-%     NewState = [erlang:spawn_link(?MODULE, accept, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
-%     rabbit_log:info("Hermes acceptors list ~p for port ~p",[NewState,Port]),
-%     timer:sleep(infinity),
-%     rabbit_log:info("No sleep? WTF!?",[]),
-%     {noreply,{State, NewState}};
-
+handle_cast(start_acceptors, State) ->
+    {ListenSocket, _} = State,
+    [supervisor:start_child(hermes_accept_sup, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
+    {noreply, State};
+handle_cast(start_qpushers, State) ->
+    DevUIDList = ets:tab2list(?ETS_TABLE),
+    [supervisor:start_child(hermes_q_pusher_sup, [DevUID]) || {DevUID, _, _, _} <- DevUIDList],
+    {noreply, State};
+handle_cast({handle_socket, DevUID, PMPid, BinData}, State) ->
+    case handle_socket(DevUID) of
+        undefined ->
+            PMPid ! {abort, ok};
+        {QPPid, AMQPChannel} ->
+            %% объявляем новый пакман
+            QPPid ! {new_socket, PMPid, BinData},
+            %% регистрируем в ETS
+            %% (!) при каждом подключении девайса
+            ets:insert(?ETS_TABLE, {DevUID, QPPid, AMQPChannel, PMPid})
+    end,
+    {noreply, State};
 handle_cast(_, State) ->
-    {noreply,State}.
+    {noreply, State}.
 
+handle_info(start_server, _State) ->
+    %% создаём ETS таблицу для {DevUID :: bitstring(), QPPid :: pid(), AMQPChannel :: pid(), PMPid :: pid()}
+    ets:new(?ETS_TABLE, [named_table]),
+    %% запускаем сервер на порту из конфига (или дефолт: 60521)
+    NewState = server(application:get_env(hermes_galileosky, tcp_port, 60521)),
+    self() ! started_server,
+    {noreply, NewState};
+handle_info(started_server, State) ->
+    erlang:register(?MODULE, self()),
+    {noreply, State};
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_, {?MODULE, Port}) ->
-    gen_tcp:close(Port),
+terminate(_, {ListenSocket, AMQPConnection}) ->
+    case ListenSocket of
+        undefined -> ok;
+        _ -> gen_tcp:close(ListenSocket)
+    end,
+    case AMQPConnection of
+        undefined -> ok;
+        _ -> amqp_connection:close(AMQPConnection)
+    end,
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-%----------------------------------------------
 
-%% запускаем сервер на порту
+%%%----------------------------------------------------------------------------
+%% server
 server(Port) ->
-  {ok, ListenSocket} = gen_tcp:listen(Port, [binary,{active,false},{reuseaddr,true},{exit_on_close,true},{keepalive,false},{nodelay,true},{backlog,128}]),
-  rabbit_log:info("started Hermes-Galileosky server at port ~p~n", [Port]), %% чокаво
-  NewState = [erlang:spawn_link(?MODULE, accept, [Id, ListenSocket]) || Id <- lists:seq(0, ?PROCNUM)],
-  rabbit_log:info("Hermes acceptors list ~p for port ~p~n",[NewState, Port]), %% чокаво
-  timer:sleep(infinity).
+    wait_rabbit_start(),
+    %% TODO: guard
+    {ok, AMQPConnection} = amqp_connection:start(
+        #amqp_params_direct{}, <<"hermes_galileosky_server">>
+    ),
+    erlang:link(AMQPConnection),
+    {ok, ListenSocket} = gen_tcp:listen(Port, [
+        binary,
+        {active, false},
+        {reuseaddr, true},
+        {exit_on_close, true},
+        {keepalive, false},
+        {nodelay, true},
+        {backlog, 128}
+    ]),
+    %% -----------
+    rabbit_log:info("Started Hermes Galileosky server at port ~p", [Port]),
+    {ListenSocket, AMQPConnection}.
 
-accept(Id, ListenSocket) -> %% прием TCP соединения от устройства
-  rabbit_log:info("acceptor #~p: wait for client~n", [Id]), %% чокаво
-  %% TODO: guard
-  {ok, Socket} = gen_tcp:accept(ListenSocket),
-  %% -----------
-  rabbit_log:info("acceptor #~p: client connected on socket ~p~n", [Id, Socket]), %% чокаво
-  case gen_tcp:controlling_process(Socket, PMPid = erlang:spawn(galileo_pacman, packet_manager, [Socket, 61000])) of %% рожаем pacman-а и вешаем ему сокет
-    ok ->
-      PMPid ! {get, self()}, %% у родившегося pacman-а запрашиваем пакет от девайса
-      receive
-        {p_m, PMPid, Socket, Crc, BinData} -> %% принят ответ от рожденного pacman-а
-          case packet_getid(BinData) of
-            ok -> %% UID девайса нот детектед
-              PMPid ! {abort, ok}; %% яваснезвалидитенайух
-            Dev_UID -> %% UID девайса детектед
-              gen_tcp:send(Socket, [<<2>>, Crc]), %% отправляем ответный CRC
-              handle_socket(Dev_UID, PMPid, BinData), %% приступаем к водным процедурам
-              rabbit_log:info("acceptor #~p: client ~p, device UID=~p, pacman PID=~p, socket ~p~n", [Id, inet:peername(Socket), Dev_UID, PMPid, Socket]) %% чокаво
-          end;
-        Any ->
-          rabbit_log:info("acceptor #~p get ~p~n",[Id,Any])
-      after 60000 ->
-        rabbit_log:info("acceptor #~p timeout: client ~p, pacman PID=~p, socket ~p~n", [Id, inet:peername(Socket), PMPid, Socket]), %% чокаво
-        PMPid ! {abort, ok},
-        gen_tcp:close(Socket)
-      end;
-    {error, _} ->
-      gen_tcp:close(Socket)
+%%%----------------------------------------------------------------------------
+%%% acceptor implementation
+
+%% прием TCP соединения от устройства
+accept(Id, ListenSocket) ->
+    rabbit_log:info("Hermes Galileosky server: acceptor #~p wait for client", [Id]),
+    %% TODO: guard
+    {ok, Socket} = gen_tcp:accept(ListenSocket),
+    %% -----------
+    rabbit_log:info("Hermes Galileosky server: acceptor #~p: client connected on socket ~p", [
+        Id, Socket
+    ]),
+    %% TODO: guard
+    {ok, PMPid} = supervisor:start_child(galileo_pacman_sup, [Socket, 61000]),
+    %% -----------
+    case gen_tcp:controlling_process(Socket, PMPid) of
+        ok ->
+            %% у родившегося pacman-а запрашиваем пакет от девайса
+            PMPid ! {get, self()},
+            receive
+                %% принят ответ от рожденного pacman-а
+                {p_m, PMPid, Socket, Crc, BinData} ->
+                    case packet_getid(BinData) of
+                        %% UID девайса нот детектед
+                        ok ->
+                            PMPid ! {abort, ok};
+                        %% UID девайса детектед
+                        DevUID ->
+                            %% отправляем ответный CRC
+                            gen_tcp:send(Socket, [<<2>>, Crc]),
+                            %% приступаем к водным процедурам
+                            gen_server:cast(hermes_worker, {handle_socket, DevUID, PMPid, BinData}),
+                            rabbit_log:info(
+                                "Hermes Galileosky server: acceptor #~p: client ~p, device UID=~p, pacman PID=~p, socket ~p",
+                                [Id, inet:peername(Socket), DevUID, PMPid, Socket]
+                            )
+                    end;
+                Any ->
+                    PMPid ! {abort, ok},
+                    rabbit_log:info("Hermes Galileosky server: acceptor #~p get ~p", [Id, Any])
+                %% таймаут ожидания ответа от устройства
+            after 60000 ->
+                rabbit_log:info(
+                    "Hermes Galileosky server: acceptor #~p timeout: client ~p, pacman PID=~p, socket ~p~n",
+                    [Id, inet:peername(Socket), PMPid, Socket]
+                ),
+                PMPid ! {abort, ok}
+            end;
+        {error, _} ->
+            gen_tcp:close(Socket)
     end,
-  accept(Id, ListenSocket).
+    accept(Id, ListenSocket).
 
-handle_socket(Dev_UID, PMPid, BinData) -> %% ищем запущенный или рожаем новый обработчик данных от девайса.
-  case erlang:whereis(erlang:binary_to_atom(Dev_UID, latin1)) of
-    undefined -> %% новый девайс
-      erlang:spawn(hermes_q_pusher,q_pusher_init,[Dev_UID, PMPid]) ! {new_socket, PMPid, BinData},
-      rabbit_log:info("new qpusher for uid=~p pacman pid=~p~n", [Dev_UID, PMPid]); %% чокаво;
-    QPPid -> %% девайс переподключился на новый сокет
-      QPPid ! {new_socket, PMPid, BinData},
-      rabbit_log:info("found qpusher ~p: new pacman pid=~p for uid=~p~n", [QPPid, PMPid, Dev_UID]) %% чокаво
-  end.
+%%%----------------------------------------------------------------------------
+%%% Private helpers
+
+%% рожаем новый или ищем запущенный обработчик данных от девайса.
+handle_socket(DevUID) ->
+    case ets:lookup(hermes_galileosky_server, DevUID) of
+        [{DevUID, CurrQPPid, AMQPChannel, CurrPMPid}] ->
+            CurrPMPid ! {abort, ok},
+            {CurrQPPid, AMQPChannel};
+        _ ->
+            case supervisor:start_child(hermes_q_pusher_sup, [DevUID]) of
+                %% новый девайс
+                {ok, Child} ->
+                    {Child, undefined};
+                {ok, Child, _Info} ->
+                    {Child, undefined};
+                %% девайс переподключился на новый сокет
+                %% not in s_o_f_o supervisor case
+                {error, {already_started, Child}} ->
+                    {Child, undefined};
+                %% any
+                _ ->
+                    undefined
+            end
+    end.
 
 packet_getid(<<>>) ->
-  ok; %% no IMEI tag found
+    %% no IMEI tag found
+    ok;
 packet_getid(BinData) when erlang:is_binary(BinData) ->
-  <<Tag:8, REst/binary>> = BinData,
-  case Tag == 3 of
-    false ->
-      <<_:1/binary, Est/binary>> = REst,
-      packet_getid(Est);
-    true ->
-      <<Dev_UID:120/bits, _/bits>> = REst,
-      Dev_UID
-  end.
+    <<Tag:8, REst/binary>> = BinData,
+    case Tag == 3 of
+        false ->
+            <<_:1/binary, Est/binary>> = REst,
+            packet_getid(Est);
+        true ->
+            <<DevUID:120/bits, _/bits>> = REst,
+            DevUID
+    end.
+
+wait_rabbit_start() ->
+    case rabbit:is_running() of
+        false ->
+            timer:sleep(1000),
+            wait_rabbit_start();
+        true ->
+            ok
+    end.
