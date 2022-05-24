@@ -1,6 +1,6 @@
 # Hermes JSON
 ## About
-Application providing:
+Provides:
 
-* parsing messages in Erlang terms format from `hermes` queue to `hermes_json` queue in RabbitMQ
-* listening configs from `hermes_json_cfg` queue
+* parsing and postprocessing messages in Erlang terms format to JSON, from `hermes` queue  to `hermes_json` queue in RabbitMQ
+* listening config messages from `hermes_json_cfg` queue
