@@ -1,6 +1,6 @@
 # Hermes Galileosky device server
 ## About
-Application providing:
+Provides:
 
 * server for Galileosky devices TCP connections
-* transfering data from TCP packets to RabbitMQ queue, named by device `IMEI`
+* publishing data from TCP packets to RabbitMQ queue, named by `IMEI` of connected devices
