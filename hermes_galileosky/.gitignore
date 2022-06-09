@@ -1,6 +1,7 @@
 .sw?
 .*.sw?
 *.beam
+*.d
 /.erlang.mk/
 /cover/
 /deps/
