@@ -101,7 +101,7 @@ parse_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
                         <<>>,
                         Tag,
                         DevUID,
-                        [{lists:flatten(Acc, [{<<"unknown_galileosky_protocol_tag">>, Tag}])}],
+                        [{<<"unknown_galileosky_protocol_tag">>, Tag} | Acc],
                         TArr
                     )
             end;
