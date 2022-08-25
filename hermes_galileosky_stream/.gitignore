@@ -1,0 +1,11 @@
+.sw?
+.*.sw?
+*.beam
+*.d
+/.erlang.mk/
+/cover/
+/deps/
+/doc/
+/logs/
+/plugins/
+/ebin/
