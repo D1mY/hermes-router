@@ -209,12 +209,14 @@ handle_pusher_channel(PuPid, Q, Connection) ->
             amqp_channel:close(Channel)
     end,
     {ok, PuChannel} = amqp_connection:open_channel(Connection),
+    {OffsetType, OffsetValue} = get_offset(Q),
     #'queue.declare_ok'{} = amqp_channel:call(PuChannel, #'queue.declare'{
         queue = Q,
         durable = true,
         arguments =
             [
-                {<<"x-queue-type">>, longstr, <<"stream">>}
+                {<<"x-queue-type">>, longstr, <<"stream">>},
+                {<<"x-stream-offset">>, OffsetType, OffsetValue}
             ]
     }),
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
@@ -296,3 +298,7 @@ parse_cfg(Payload) ->
             ]),
             {value, [], []}
     end.
+
+get_offset(Q) ->
+    {long, Offset},
+    {longstr, <<"first">>}.

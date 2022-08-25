@@ -59,7 +59,7 @@ handle_content(Content, CfgMap) ->
         ] ->
             Payload = Content#amqp_msg.payload,
             Res = parse_data(CfgMap, Payload, 0, DevUID, [], []),
-            save_offset(MsgOffset),
+            save_offset(DevUID, MsgOffset),
             erlang:term_to_binary(Res, [compressed]);
         _ ->
             not_valid
@@ -122,7 +122,7 @@ parse_len(Size, Data) when erlang:is_integer(Size) ->
 parse_len(SizeFun, Data) ->
     SizeFun(Data).
 
-save_offset(Offset) -> ok.
+save_offset(Id, Offset) -> ok.
 
 %%%-----------------------------------------------------------------------------
 %%% helpers
