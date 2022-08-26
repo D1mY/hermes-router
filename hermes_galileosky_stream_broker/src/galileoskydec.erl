@@ -190,6 +190,12 @@ configure(State = #state{channel = Channel}) ->
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:call(
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}
     ),
+    {ok, OffsetsDETSName} = dets:open_file(
+        erlang:atom_to_list(erlang:node()) ++ "_hermes_galileosky_stream_offsets",
+        [
+            {ram_file, true}
+        ]
+    ),
     erlang:register(?MODULE, self()),
     rabbit_log:info("Hermes Galileosky broker started", []),
     State#state{consumer_tag = ConsTag}.
@@ -209,14 +215,14 @@ handle_pusher_channel(PuPid, Q, Connection) ->
             amqp_channel:close(Channel)
     end,
     {ok, PuChannel} = amqp_connection:open_channel(Connection),
-    {OffsetType, OffsetValue} = get_offset(Q),
+    OffsetValue = get_offset(Q),
     #'queue.declare_ok'{} = amqp_channel:call(PuChannel, #'queue.declare'{
         queue = Q,
         durable = true,
         arguments =
             [
                 {<<"x-queue-type">>, longstr, <<"stream">>},
-                {<<"x-stream-offset">>, OffsetType, OffsetValue}
+                {<<"x-stream-offset">>, long, OffsetValue}
             ]
     }),
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
@@ -300,5 +306,4 @@ parse_cfg(Payload) ->
     end.
 
 get_offset(Q) ->
-    {long, Offset},
-    {longstr, <<"first">>}.
+    Offset.
