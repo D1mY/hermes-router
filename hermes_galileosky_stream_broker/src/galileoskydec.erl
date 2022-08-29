@@ -26,11 +26,14 @@ start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    case decmap:unfold() of
-        true ->
-            self() ! configure;
-        false ->
-            rabbit_log:info("Hermes Galileosky broker fatal: decmap unfold error during init")
+    try
+        decmap:unfold(),
+        self() ! configure
+    catch
+        Ex ->
+            rabbit_log:info(
+                "Hermes Galileosky stream broker fatal: decmap unfold error during init ~n~p",
+            [Ex])
     end,
     {ok, #state{}}.
 
@@ -91,7 +94,7 @@ terminate(
     amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
     amqp_channel:close(Channel),
     amqp_connection:close(Connection),
-    rabbit_log:info("Hermes Galileosky broker terminated: ~p", [Reason]),
+    rabbit_log:info("Hermes Galileosky stream broker terminated: ~p", [Reason]),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -130,7 +133,7 @@ start_pusher(DevUID, CfgData) ->
         {error, already_present} ->
             supervisor:restart_child(galileosky_pusher_sup, PuName);
         {error, What} ->
-            rabbit_log:info("Hermes Galileosky broker: pusher for ~p start error: ~p", [
+            rabbit_log:info("Hermes Galileosky stream broker: pusher for ~p start error: ~p", [
                 DevUID, What
             ]);
         _ ->
@@ -190,18 +193,15 @@ configure(State = #state{channel = Channel}) ->
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:call(
         Channel, #'basic.consume'{queue = <<"hermes_galileosky_broker_cfg">>}
     ),
-    {ok, OffsetsDETSName} = dets:open_file(
-        erlang:atom_to_list(erlang:node()) ++ "_hermes_galileosky_stream_offsets",
-        [
-            {ram_file, true}
-        ]
-    ),
+    hermes_stream_offsets_keeper:init(),
     erlang:register(?MODULE, self()),
-    rabbit_log:info("Hermes Galileosky broker started", []),
+    rabbit_log:info("Hermes Galileosky stream broker started", []),
     State#state{consumer_tag = ConsTag}.
 
 intercourse() ->
-    {ok, Connection} = amqp_connection:start(#amqp_params_direct{}, <<"hermes_galileosky_broker">>),
+    {ok, Connection} = amqp_connection:start(
+        #amqp_params_direct{}, <<"hermes_galileosky_stream_broker">>
+    ),
     {ok, Channel} = amqp_connection:open_channel(Connection),
     %% will terminate RMQ connection after die
     erlang:link(Connection),
@@ -215,7 +215,7 @@ handle_pusher_channel(PuPid, Q, Connection) ->
             amqp_channel:close(Channel)
     end,
     {ok, PuChannel} = amqp_connection:open_channel(Connection),
-    OffsetValue = get_offset(Q),
+    OffsetValue = hermes_stream_offsets_keeper:get_offset(Q),
     #'queue.declare_ok'{} = amqp_channel:call(PuChannel, #'queue.declare'{
         queue = Q,
         durable = true,
@@ -225,6 +225,7 @@ handle_pusher_channel(PuPid, Q, Connection) ->
                 {<<"x-stream-offset">>, long, OffsetValue}
             ]
     }),
+    amqp_channel:call(PuChannel, #'basic.qos'{prefetch_count = 100}),
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
         PuChannel, #'basic.consume'{queue = Q}, PuPid
     ),
@@ -246,7 +247,7 @@ cfg_path() ->
         ok ->
             Path;
         {error, Reason} ->
-            rabbit_log:info("Hermes Galileosky broker: cfg files location ~p error: ~p", [
+            rabbit_log:info("Hermes Galileosky stream broker: cfg files location ~p error: ~p", [
                 Path, Reason
             ]),
             error
@@ -261,7 +262,7 @@ fold_cfg_files(Path) ->
         "^hermes_galileosky_",
         true,
         fun(File, _) ->
-            rabbit_log:info("Hermes Galileosky broker: found cfg ~p", [File]),
+            rabbit_log:info("Hermes Galileosky stream broker: found cfg ~p", [File]),
             UID = string:trim(File, leading, Path ++ "/hermes_galileosky_"),
             gen_server:cast(
                 galileoskydec,
@@ -283,7 +284,7 @@ handle_cfg_file(DevUID, CfgData) ->
     end.
 
 parse_cfg(<<>>) ->
-    rabbit_log:info("Hermes Galileosky broker: default cfg request"),
+    rabbit_log:info("Hermes Galileosky stream broker: default cfg request"),
     {value, [], []};
 parse_cfg(Payload) ->
     CfgData = erlang:binary_to_list(Payload),
@@ -293,17 +294,16 @@ parse_cfg(Payload) ->
                 {ok, ExprLst} ->
                     erl_eval:exprs(ExprLst, []);
                 {error, ErrInf} ->
-                    rabbit_log:info("Hermes Galileosky broker: parse cfg expressions error: ~p", [
-                        ErrInf
-                    ]),
+                    rabbit_log:info(
+                        "Hermes Galileosky stream broker: parse cfg expressions error: ~p", [
+                            ErrInf
+                        ]
+                    ),
                     {value, [], []}
             end;
         {error, ErrInf, ErrLoc} ->
-            rabbit_log:info("Hermes Galileosky broker: cfg read error: ~p~n location: ~p", [
+            rabbit_log:info("Hermes Galileosky stream broker: cfg read error: ~p~n location: ~p", [
                 ErrInf, ErrLoc
             ]),
             {value, [], []}
     end.
-
-get_offset(Q) ->
-    Offset.

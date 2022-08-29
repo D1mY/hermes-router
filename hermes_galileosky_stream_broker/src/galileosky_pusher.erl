@@ -59,7 +59,7 @@ handle_content(Content, CfgMap) ->
         ] ->
             Payload = Content#amqp_msg.payload,
             Res = parse_data(CfgMap, Payload, 0, DevUID, [], []),
-            save_offset(DevUID, MsgOffset),
+            hermes_stream_offsets_keeper:save_offset(DevUID, MsgOffset),
             erlang:term_to_binary(Res, [compressed]);
         _ ->
             not_valid
@@ -117,12 +117,10 @@ parse_data(CfgMap, Payload, PrevTag, DevUID, Acc, TArr) ->
             ])
     end.
 
-parse_len(Size, Data) when erlang:is_integer(Size) ->
+parse_len(Size, _) when erlang:is_integer(Size) ->
     Size;
 parse_len(SizeFun, Data) ->
     SizeFun(Data).
-
-save_offset(Id, Offset) -> ok.
 
 %%%-----------------------------------------------------------------------------
 %%% helpers
