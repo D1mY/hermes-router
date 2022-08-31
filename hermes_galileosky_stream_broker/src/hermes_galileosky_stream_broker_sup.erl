@@ -1,9 +1,9 @@
 %%%-------------------------------------------------------------------
-%% @doc hermes_galileosky_broker top level supervisor.
+%% @doc hermes_galileosky_stream_broker top level supervisor.
 %% @end
 %%%-------------------------------------------------------------------
 
--module(hermes_galileosky_broker_sup).
+-module(hermes_galileosky_stream_broker_sup).
 
 -behaviour(supervisor).
 

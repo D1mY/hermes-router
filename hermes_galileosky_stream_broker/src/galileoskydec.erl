@@ -26,15 +26,8 @@ start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
 init([]) ->
-    try
-        decmap:unfold(),
-        self() ! configure
-    catch
-        Ex ->
-            rabbit_log:info(
-                "Hermes Galileosky stream broker fatal: decmap unfold error during init ~n~p",
-            [Ex])
-    end,
+    decmap:unfold(),
+    self() ! configure,
     {ok, #state{}}.
 
 %%%----------------------------------------------------------------------------
@@ -90,10 +83,15 @@ terminate(
         consumer_tag = ConsTag
     }
 ) ->
-    erlang:unlink(Connection),
-    amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
-    amqp_channel:close(Channel),
-    amqp_connection:close(Connection),
+    if
+        erlang:is_pid(Connection) ->
+            erlang:unlink(Connection),
+            amqp_channel:call(Channel, #'basic.cancel'{consumer_tag = ConsTag}),
+            amqp_channel:close(Channel),
+            amqp_connection:close(Connection);
+        true ->
+            ok
+    end,
     rabbit_log:info("Hermes Galileosky stream broker terminated: ~p", [Reason]),
     ok.
 
@@ -222,12 +220,14 @@ handle_pusher_channel(PuPid, Q, Connection) ->
         arguments =
             [
                 {<<"x-queue-type">>, longstr, <<"stream">>},
-                {<<"x-stream-offset">>, long, OffsetValue}
+                {<<"x-max-age">>, longstr, <<"1Y">>}
             ]
     }),
     amqp_channel:call(PuChannel, #'basic.qos'{prefetch_count = 100}),
     #'basic.consume_ok'{consumer_tag = ConsTag} = amqp_channel:subscribe(
-        PuChannel, #'basic.consume'{queue = Q}, PuPid
+        PuChannel,
+        #'basic.consume'{queue = Q, arguments = [{<<"x-stream-offset">>, long, OffsetValue}]},
+        PuPid
     ),
     erlang:put(erlang:binary_to_atom(Q), {ConsTag, PuChannel}),
     PuChannel.

@@ -19,7 +19,7 @@ init() ->
         []
     ),
     ets:new(?OFFSETETS, [
-        public, {write_concurrency, true}, {read_concurrency, true}
+        named_table, public, {write_concurrency, true}, {read_concurrency, true}
     ]),
     ets:from_dets(?OFFSETETS, OffsetsDETSName),
     timer:apply_interval(?SAVEINTERVAL, ?MODULE, save_offsets, [OffsetsDETSName]).
@@ -27,7 +27,7 @@ init() ->
 get_offset(Q) ->
     case ets:lookup(?OFFSETETS, Q) of
         [{_, Offset}] ->
-            Offset;
+            Offset + 1;
         [] ->
             0
     end.

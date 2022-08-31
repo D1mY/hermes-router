@@ -1,6 +1,6 @@
 PROJECT = hermes_galileosky_stream_broker
 PROJECT_DESCRIPTION = Hermes Galileosky broker (stream consumer)
-PROJECT_MOD = hermes_galileosky_broker
+PROJECT_MOD = hermes_galileosky_stream_broker
 
 DEPS = rabbit_common rabbit amqp_client
 

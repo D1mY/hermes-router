@@ -1,15 +1,15 @@
--module(hermes_galileosky_broker).
+-module(hermes_galileosky_stream_broker).
 
 -behaviour(application).
 
 -export([start/0, start/2, stop/0, stop/1]).
 
 start() ->
-    hermes_galileosky_broker_sup:start_link(),
+    hermes_galileosky_stream_broker_sup:start_link(),
     ok.
 
 start(_Type, _StartArgs) ->
-    hermes_galileosky_broker_sup:start_link().
+    hermes_galileosky_stream_broker_sup:start_link().
 
 stop() -> ok.
 
