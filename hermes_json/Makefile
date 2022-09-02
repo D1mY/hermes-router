@@ -2,7 +2,7 @@ PROJECT = hermes_json
 PROJECT_DESCRIPTION = Hermes -> JSON
 PROJECT_MOD = hermes_json
 
-DEPS = rabbit_common rabbit amqp_client jsx
+DEPS = rabbit_common rabbit amqp_client
 
 DEP_EARLY_PLUGINS = rabbit_common/mk/rabbitmq-early-plugin.mk
 DEP_PLUGINS = rabbit_common/mk/rabbitmq-plugin.mk
