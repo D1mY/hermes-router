@@ -29,7 +29,7 @@ init([]) ->
     {ok, {undefined, undefined}}.
 
 %%%----------------------------------------------------------------------------
-handle_call(init_ets_table, _From, State) ->
+handle_call(init_by_ets_table, _From, State) ->
     AMQPChannelsList = ets:tab2list(?ETS_TABLE),
     [amqp_channel:close(AMQPChannel) || {_, _, AMQPChannel, _} <- AMQPChannelsList],
     ets:delete_all_objects(?ETS_TABLE),
@@ -57,6 +57,11 @@ handle_call({stop_pacman, DevUID}, _From, State) ->
             ok
     end,
     {reply, ok, State};
+handle_call(get_uids, _From, State) ->
+    ETSTable = ets:tab2list(?ETS_TABLE),
+    UIDsList = proplists:get_keys(ETSTable),
+    Reply = lists:usort(UIDsList),
+    {reply, Reply, State};
 handle_call(_Msg, _From, State) ->
     {reply, unknown_command, State}.
 

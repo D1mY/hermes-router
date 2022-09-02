@@ -38,5 +38,5 @@ init_ets() ->
             timer:sleep(1000),
             init_ets();
         Pid ->
-            gen_server:call(Pid, init_ets_table)
+            gen_server:call(Pid, init_by_ets_table)
     end.

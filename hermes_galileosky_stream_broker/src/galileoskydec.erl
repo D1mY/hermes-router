@@ -4,6 +4,8 @@
 
 -include_lib("../deps/amqp_client/include/amqp_client.hrl").
 
+-define(OFFSETETS, hermes_galileosky_stream_offsets).
+
 -behaviour(gen_server).
 
 -export([start_link/0]).
@@ -67,6 +69,33 @@ handle_info(#'basic.cancel_ok'{consumer_tag = ConsTag}, State) ->
         false ->
             {noreply, State}
     end;
+%% Temporary pushers mode
+handle_info({sniff_uids_init, CfgData}, State) ->
+    OffsetsList = ets:tab2list(?OFFSETETS),
+    DevUIDsDraftList = proplists:delete(saved, OffsetsList),
+    DevUIDsList = proplists:get_keys(DevUIDsDraftList),
+    DevUIDsSortedList = lists:usort(DevUIDsList),
+    self() ! {sniff_uids, DevUIDsSortedList, CfgData},
+    {noreply, State};
+handle_info({sniff_uids, LC, CfgData}, State) ->
+    LA =
+        case erlang:whereis(hermes_worker) of
+            undefined ->
+                [];
+            Pid ->
+                gen_server:call(Pid, get_uids)
+        end,
+    L0 = lists:umerge(LC, LA),
+    LN = lists:subtract(LA, LC),
+    case LN of
+        [] ->
+            ok;
+        _ ->
+            [gen_server:cast(?MODULE, {start_pusher, [DevUID, CfgData]})|| DevUID <- LN]
+    end,
+    erlang:send_after(5000, self(), {sniff_uids, L0, CfgData}),
+    {noreply, State};
+%%---------------------------
 handle_info(configure, _State) ->
     State = configure(),
     {noreply, State};
@@ -103,10 +132,13 @@ handle_content(Content) ->
         [{<<"uid_psh">>, _, DevUID}] ->
             {value, CfgData, _} = parse_cfg(Content#amqp_msg.payload),
             handle_cfg_file(DevUID, CfgData),
-            gen_server:cast(galileoskydec, {start_pusher, [DevUID, CfgData]});
+            gen_server:cast(?MODULE, {start_pusher, [DevUID, CfgData]});
         [{<<"uid_rmv">>, _, DevUID}] ->
             handle_cfg_file(DevUID, <<"uid_rmv">>),
             stop_pusher(DevUID);
+        [{<<"uid_sniff">>, _, _}] ->
+            {value, CfgData, _} = parse_cfg(Content#amqp_msg.payload),
+            self() ! {sniff_uids_init, CfgData};
         _ ->
             not_valid
     end.
@@ -265,7 +297,7 @@ fold_cfg_files(Path) ->
             rabbit_log:info("Hermes Galileosky stream broker: found cfg ~p", [File]),
             UID = string:trim(File, leading, Path ++ "/hermes_galileosky_"),
             gen_server:cast(
-                galileoskydec,
+                ?MODULE,
                 {start_pusher, [erlang:list_to_binary(UID), []]}
             )
         end,
