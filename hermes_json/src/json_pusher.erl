@@ -43,7 +43,7 @@ loop(Channel) ->
     end.
 
 handle_content(Res, []) ->
-    jsx:encode(Res);
+    thoas:encode(Res);
 handle_content(Acc, Payload) ->
     %% Payload :: [{[{tag1,Val1},...,{tagN,ValN}]},...,{[{tag1,Val1},...,{tagN,ValN}]}]
     %% Cfg :: [{tag1,Fun1},...,{tagN,FunN}]
