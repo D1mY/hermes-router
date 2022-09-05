@@ -70,6 +70,7 @@ handle_info(#'basic.cancel_ok'{consumer_tag = ConsTag}, State) ->
             {noreply, State}
     end;
 %% Temporary pushers mode
+%% TOD(ecrutch)
 handle_info({sniff_uids_init, CfgData}, State) ->
     OffsetsList = ets:tab2list(?OFFSETETS),
     DevUIDsDraftList = proplists:delete(saved, OffsetsList),
@@ -83,7 +84,7 @@ handle_info({sniff_uids, LC, CfgData}, State) ->
             undefined ->
                 [];
             Pid ->
-                gen_server:call(Pid, get_uids)
+                gen_server:call(Pid, get_active_uids)
         end,
     L0 = lists:umerge(LC, LA),
     LN = lists:subtract(LA, LC),

@@ -57,7 +57,7 @@ handle_call({stop_pacman, DevUID}, _From, State) ->
             ok
     end,
     {reply, ok, State};
-handle_call(get_uids, _From, State) ->
+handle_call(get_active_uids, _From, State) ->
     ETSTable = ets:tab2list(?ETS_TABLE),
     UIDsList = proplists:get_keys(ETSTable),
     Reply = lists:usort(UIDsList),
