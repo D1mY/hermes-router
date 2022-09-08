@@ -6,12 +6,16 @@
 
 -export([
     start/1,
-    init/1
+    start/2,
+    init/1,
+    init/2
 ]).
 
-start(Q) when erlang:is_bitstring(Q) ->
-    {ok, erlang:spawn_link(?MODULE, init, [Q])};
-start(Any) ->
+start(Q) ->
+    start(Q, []).
+start(Q, Cfg) when erlang:is_bitstring(Q) ->
+    {ok, erlang:spawn_link(?MODULE, init, [Q]++[Cfg])};
+start(Any,_) ->
     rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [
         self(), Any
     ]).
@@ -19,9 +23,11 @@ start(Any) ->
 init(Q) ->
     CfgPath = gen_server:call(galileoskydec, get_cfg_path),
     Cfg = read_cfg_file(CfgPath, Q),
-    self() ! {cfg, Cfg},
+    init(Q, Cfg).
+init(Q, Cfg) ->
+    CfgMap = map_cfg(Cfg),
     Channel = gen_server:call(galileoskydec, {get_channel, Q}),
-    loop(Channel, []),
+    loop(Channel, CfgMap),
     ok.
 
 loop(Channel, CfgMap) ->
@@ -30,12 +36,14 @@ loop(Channel, CfgMap) ->
             %% IMEI ("uid") should be in header
             Res = handle_content(Content, CfgMap),
             case publish_points(Channel, Res, DlvrTag) of
-                ok -> loop(Channel, CfgMap);
+                ok ->
+                    loop(Channel, CfgMap);
                 %% TODO: handle this
-                Any -> Any
+                Any ->
+                    Any
             end;
         {cfg, Payload} ->
-            CfgMap1 = maps:merge(maps:from_list(ets:tab2list(galskytags)), maps:from_list(Payload)),
+            CfgMap1 = map_cfg(Payload),
             loop(Channel, CfgMap1);
         #'basic.consume_ok'{consumer_tag = ConsTag} ->
             erlang:put(consumer_tag, ConsTag),
@@ -147,3 +155,6 @@ ack_points(Channel, DlvrTag) ->
         _ ->
             ok
     end.
+
+map_cfg(Cfg) ->
+    maps:merge(maps:from_list(ets:tab2list(galskytags)), maps:from_list(Cfg)).

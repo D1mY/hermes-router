@@ -69,32 +69,14 @@ handle_info(#'basic.cancel_ok'{consumer_tag = ConsTag}, State) ->
         false ->
             {noreply, State}
     end;
-%% Temporary pushers mode
 %% TOD(ecrutch)
 handle_info({sniff_uids_init, CfgData}, State) ->
-    OffsetsList = ets:tab2list(?OFFSETETS),
-    DevUIDsDraftList = proplists:delete(saved, OffsetsList),
-    DevUIDsList = proplists:get_keys(DevUIDsDraftList),
-    DevUIDsSortedList = lists:usort(DevUIDsList),
-    self() ! {sniff_uids, DevUIDsSortedList, CfgData},
+    hermes_uid_sniffer:init(?MODULE, ?OFFSETETS, CfgData),
     {noreply, State};
-handle_info({sniff_uids, LC, CfgData}, State) ->
-    LA =
-        case erlang:whereis(hermes_worker) of
-            undefined ->
-                [];
-            Pid ->
-                gen_server:call(Pid, get_active_uids)
-        end,
-    L0 = lists:umerge(LC, LA),
-    LN = lists:subtract(LA, LC),
-    case LN of
-        [] ->
-            ok;
-        _ ->
-            [gen_server:cast(?MODULE, {start_pusher, [DevUID, CfgData]})|| DevUID <- LN]
-    end,
-    erlang:send_after(5000, self(), {sniff_uids, L0, CfgData}),
+%% нужен перезапуск когда сдохнет супер пушеров
+handle_info({sniff_uids, CfgData}, State) ->
+    hermes_uid_sniffer:do(CfgData),
+    erlang:send_after(5000, ?MODULE, {sniff_uids, CfgData}),
     {noreply, State};
 %%---------------------------
 handle_info(configure, _State) ->
@@ -139,7 +121,7 @@ handle_content(Content) ->
             stop_pusher(DevUID);
         [{<<"uid_sniff">>, _, _}] ->
             {value, CfgData, _} = parse_cfg(Content#amqp_msg.payload),
-            self() ! {sniff_uids_init, CfgData};
+            ?MODULE ! {sniff_uids_init, CfgData};
         _ ->
             not_valid
     end.
