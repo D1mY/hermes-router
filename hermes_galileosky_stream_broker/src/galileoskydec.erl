@@ -69,16 +69,16 @@ handle_info(#'basic.cancel_ok'{consumer_tag = ConsTag}, State) ->
         false ->
             {noreply, State}
     end;
-%% TOD(ecrutch)
-handle_info({sniff_uids_init, CfgData}, State) ->
-    hermes_uid_sniffer:init(?MODULE, ?OFFSETETS, CfgData),
-    {noreply, State};
-%% нужен перезапуск когда сдохнет супер пушеров
-handle_info({sniff_uids, CfgData}, State) ->
-    hermes_uid_sniffer:do(CfgData),
-    erlang:send_after(5000, ?MODULE, {sniff_uids, CfgData}),
-    {noreply, State};
-%%---------------------------
+% %% TOD(ecrutch)
+% handle_info({sniff_uids_init, CfgData}, State) ->
+%     hermes_uid_sniffer:init(?MODULE, ?OFFSETETS, CfgData),
+%     {noreply, State};
+% %% нужен перезапуск когда сдохнет супер пушеров
+% handle_info({sniff_uids, CfgData}, State) ->
+%     hermes_uid_sniffer:do(CfgData),
+%     erlang:send_after(5000, ?MODULE, {sniff_uids, CfgData}),
+%     {noreply, State};
+% %%---------------------------
 handle_info(configure, _State) ->
     State = configure(),
     {noreply, State};
@@ -121,7 +121,7 @@ handle_content(Content) ->
             stop_pusher(DevUID);
         [{<<"uid_sniff">>, _, _}] ->
             {value, CfgData, _} = parse_cfg(Content#amqp_msg.payload),
-            ?MODULE ! {sniff_uids_init, CfgData};
+            start_sniffer(CfgData);
         _ ->
             not_valid
     end.
@@ -172,6 +172,39 @@ stop_pusher(DevUID) ->
             supervisor:terminate_child(galileosky_pusher_sup, PuName),
             supervisor:delete_child(galileosky_pusher_sup, PuName)
     end.
+
+start_sniffer(CfgData) ->
+    case ets:whereis(hermes_sniffer_cfg) of
+        undefined ->
+            ets:new(hermes_sniffer_cfg, [set,named_table,public,{read_concurrency, true}]);
+        _ ->
+            ets:delete_all_objects(hermes_sniffer_cfg)
+    end,
+    ets:insert(hermes_sniffer_cfg, CfgData),
+    case
+        supervisor:start_child(
+            hermes_galileosky_stream_broker_sup,
+            #{
+                id => hermes_uid_sniffer,
+                start => {hermes_uid_sniffer, init, [?OFFSETETS]},
+                restart => transient,
+                shutdown => 10000,
+                type => worker
+            }
+        )
+    of
+        {error, already_present} ->
+            ok; %% restart sniffer and its pushers
+        {error, {already_started, _}} ->
+            stop_sniffer(),
+            start_sniffer(CfgData);
+        _ ->
+            ok
+    end.
+
+stop_sniffer() ->
+    supervisor:terminate_child(hermes_galileosky_stream_broker_sup, hermes_uid_sniffer),
+    supervisor:delete_child(hermes_galileosky_stream_broker_sup, hermes_uid_sniffer).
 
 %%%-----------------------------------------------------------------------------
 %%% helpers
