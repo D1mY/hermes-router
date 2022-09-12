@@ -6,21 +6,18 @@
 
 -export([
     start/1,
-    start/2,
-    init/1,
-    init/2
+    init/1
 ]).
 
-start(Q) ->
-    start(Q, []).
-start(Q, Cfg) when erlang:is_bitstring(Q) ->
-    {ok, erlang:spawn_link(?MODULE, init, [Q|[Cfg]])}; %% ? [Q|[Cfg]]
-start(Any,_) ->
+start(Q) when erlang:is_bitstring(Q) ->
+    {ok, erlang:spawn_link(?MODULE, init, [Q])};
+start(Any) ->
     rabbit_log:info("Hermes Galileosky pusher ~p wrong queue name format: ~p", [
         self(), Any
     ]).
 
 init(Q) ->
+    ets:whereis(hermes_sniffer_cfg),
     CfgPath = gen_server:call(galileoskydec, get_cfg_path),
     Cfg = read_cfg_file(CfgPath, Q),
     init(Q, Cfg).
