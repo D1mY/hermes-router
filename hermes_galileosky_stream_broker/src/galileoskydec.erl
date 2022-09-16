@@ -119,9 +119,14 @@ handle_content(Content) ->
         [{<<"uid_rmv">>, _, DevUID}] ->
             handle_cfg_file(DevUID, <<"uid_rmv">>),
             stop_pusher(DevUID);
-        [{<<"uid_sniff">>, _, _}] ->
+        [{<<"uid_sniff">>, _, Msg}] ->
             {value, CfgData, _} = parse_cfg(Content#amqp_msg.payload),
-            start_sniffer(CfgData);
+            case Msg of
+                <<"stop">> ->
+                    stop_sniffer();
+                _ ->
+                    start_sniffer(CfgData)
+            end;
         _ ->
             not_valid
     end.
@@ -186,7 +191,7 @@ start_sniffer(CfgData) ->
             hermes_galileosky_stream_broker_sup,
             #{
                 id => hermes_uid_sniffer,
-                start => {hermes_uid_sniffer, init, [?OFFSETETS]},
+                start => {hermes_uid_sniffer, start_link, [?OFFSETETS]},
                 restart => transient,
                 shutdown => 10000,
                 type => worker
@@ -203,8 +208,13 @@ start_sniffer(CfgData) ->
     end.
 
 stop_sniffer() ->
-    supervisor:terminate_child(hermes_galileosky_stream_broker_sup, hermes_uid_sniffer),
-    supervisor:delete_child(hermes_galileosky_stream_broker_sup, hermes_uid_sniffer).
+    case supervisor:terminate_child(hermes_galileosky_stream_broker_sup, hermes_uid_sniffer) of
+        ok ->
+            supervisor:delete_child(hermes_galileosky_stream_broker_sup, hermes_uid_sniffer),
+            ets:delete(hermes_sniffer_cfg);
+        _ ->
+            ok
+    end.
 
 %%%-----------------------------------------------------------------------------
 %%% helpers

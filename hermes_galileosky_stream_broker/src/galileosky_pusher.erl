@@ -17,12 +17,10 @@ start(Any) ->
     ]).
 
 init(Q) ->
-    ets:whereis(hermes_sniffer_cfg),
     CfgPath = gen_server:call(galileoskydec, get_cfg_path),
     Cfg = read_cfg_file(CfgPath, Q),
-    init(Q, Cfg).
-init(Q, Cfg) ->
-    CfgMap = map_cfg(Cfg),
+    Cfg1 = read_sniffer_cfg(Cfg),
+    CfgMap = map_cfg(Cfg1),
     Channel = gen_server:call(galileoskydec, {get_channel, Q}),
     loop(Channel, CfgMap),
     ok.
@@ -135,7 +133,7 @@ read_cfg_file(Path, Q) ->
     File = Path ++ "/hermes_galileosky_" ++ erlang:binary_to_list(Q),
     case file:read_file(File) of
         {ok, T} ->
-            %% TODO: enshure T is list in binary
+            %% TODO: ensure T is list in binary
             erlang:binary_to_term(T);
         {error, Reason} ->
             rabbit_log:info("Hermes Galileosky pusher: cfg ~p read error: ~p", [
@@ -143,6 +141,16 @@ read_cfg_file(Path, Q) ->
             ]),
             read_cfg_file(error, Reason)
     end.
+
+read_sniffer_cfg([]) ->
+    case ets:whereis(hermes_sniffer_cfg) of
+        undefined ->
+            [];
+        _ ->
+            ets:tab2list(hermes_sniffer_cfg)
+    end;
+read_sniffer_cfg(Cfg) ->
+    Cfg.
 
 ack_points(Channel, DlvrTag) ->
     case amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DlvrTag}) of

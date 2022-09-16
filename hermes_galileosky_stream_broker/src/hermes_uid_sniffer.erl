@@ -1,7 +1,7 @@
 -module(hermes_uid_sniffer).
--export([start/1, init/1]).
+-export([start_link/1, init/1]).
 
-start(OffsetsTable) ->
+start_link(OffsetsTable) ->
     {ok, erlang:spawn_link(?MODULE, init, [OffsetsTable])}.
 
 init(OffsetsTable) ->
@@ -11,16 +11,16 @@ init(OffsetsTable) ->
     loop().
 
 loop() ->
-        receive
-            sniff ->
-                do(),
-                erlang:send_after(5000, self(), sniff),
-                loop();
-            stop ->
-                ok;
-            _ ->
-                loop()
-        end.
+    receive
+        sniff ->
+            do(),
+            erlang:send_after(5000, self(), sniff),
+            loop();
+        stop ->
+            ok;
+        _ ->
+            loop()
+    end.
 
 do() ->
     LC = get_active_pushers_uids(),
@@ -39,40 +39,11 @@ do() ->
 start_pushers([]) ->
     [];
 start_pushers(DevUIDsList) ->
-    lists:flatten([start_pusher(DevUID) || DevUID <- DevUIDsList]).
+    CfgData = ets:tab2list(hermes_sniffer_cfg),
+    lists:flatten([start_pusher(DevUID, CfgData) || DevUID <- DevUIDsList]).
 
-start_pusher(DevUID) ->
-    PuName = erlang:binary_to_atom(<<"galileosky_pusher_", DevUID/binary>>),
-    case
-        supervisor:start_child(
-            galileosky_pusher_sup,
-            #{
-                id => PuName,
-                start => {galileosky_pusher, start, [DevUID]},
-                restart => transient,
-                shutdown => 10000,
-                type => worker,
-                modules => [galileosky_pusher]
-            }
-        )
-    of
-        {ok, _} ->
-            DevUID;
-        {ok, _, _} ->
-            DevUID;
-        {error, already_present} ->
-            supervisor:restart_child(galileosky_pusher_sup, PuName),
-            DevUID;
-        {error, {already_started, _}} ->
-            DevUID;
-        {error, What} ->
-            rabbit_log:info(
-                "Hermes Galileosky stream broker: sniffer's pusher for ~p start error: ~p", [
-                    DevUID, What
-                ]
-            ),
-            []
-    end.
+start_pusher(DevUID, CfgData) ->
+    gen_server:cast(galileoskydec, {start_pusher, [DevUID, CfgData]}).
 
 get_stream_resume_uids(OffsetsTable) ->
     OffsetsList = ets:tab2list(OffsetsTable),
