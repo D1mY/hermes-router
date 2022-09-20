@@ -8,6 +8,7 @@ init(OffsetsTable) ->
     DevUIDsSortedList = get_stream_resume_uids(OffsetsTable),
     % CfgData = ets:tab2list(hermes_sniffer_cfg),
     start_pushers(DevUIDsSortedList),
+    self() ! sniff,
     loop().
 
 loop() ->

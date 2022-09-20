@@ -199,7 +199,7 @@ start_sniffer(CfgData) ->
         )
     of
         {error, already_present} ->
-            ok; %% restart sniffer and its pushers
+            ok; %% restart sniffer
         {error, {already_started, _}} ->
             stop_sniffer(),
             start_sniffer(CfgData);

@@ -128,7 +128,7 @@ parse_len(SizeFun, Data) ->
 %%%-----------------------------------------------------------------------------
 %%% helpers
 read_cfg_file(error, _) ->
-    [];
+    <<"no file">>;
 read_cfg_file(Path, Q) ->
     File = Path ++ "/hermes_galileosky_" ++ erlang:binary_to_list(Q),
     case file:read_file(File) of
@@ -142,7 +142,7 @@ read_cfg_file(Path, Q) ->
             read_cfg_file(error, Reason)
     end.
 
-read_sniffer_cfg([]) ->
+read_sniffer_cfg(<<"no file">>) ->
     case ets:whereis(hermes_sniffer_cfg) of
         undefined ->
             [];
